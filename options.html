@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body {
+      width: 400px;
+      padding: 20px;
+      font-family: Arial, sans-serif;
+    }
+    .form-group {
+      margin-bottom: 15px;
+    }
+    label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: bold;
+    }
+    input[type="text"] {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      box-sizing: border-box;
+    }
+    button {
+      background: #007bff;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    #status {
+      margin-top: 15px;
+      padding: 10px;
+      display: none;
+    }
+    .help-text {
+      font-size: 0.8em;
+      color: #6c757d;
+      display: block;
+      margin-top: 5px;
+      line-height: 1.4;
+    }
+    .input-wrapper {
+      position: relative;
+      width: 100%;
+    }
+
+    .status-icon {
+      position: absolute;
+      right: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+      display: none;
+      font-size: 16px;
+    }
+
+    .status-icon.success {
+      color: #28a745;
+      display: block;
+    }
+
+    .status-icon.error {
+      color: #dc3545;
+      display: block;
+    }
+
+    input[type="text"], input[type="password"] {
+      padding-right: 30px;
+    }
+
+    .database-controls {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .database-controls select {
+      flex: 1;
+    }
+
+    #refreshDatabases {
+      white-space: nowrap;
+      background: #6c757d;
+      padding: 8px 15px;
+    }
+
+    #refreshDatabases:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+
+    .section {
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    
+    .section-title {
+      font-size: 1.2em;
+      font-weight: bold;
+      margin-bottom: 15px;
+      color: #333;
+    }
+
+    .model-select {
+      width: 100%;
+      padding: 8px;
+      margin-bottom: 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+    }
+
+    .buttons {
+      display: flex;
+      gap: 10px;
+      margin-top: 15px;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    .input-wrapper.with-button {
+      display: flex;
+      gap: 10px;
+    }
+
+    .input-wrapper.with-button input {
+      flex: 1;
+    }
+
+    .input-wrapper.with-button button {
+      white-space: nowrap;
+      padding: 8px 15px;
+      background: #6c757d;
+    }
+
+    .input-wrapper.with-button button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+
+    .input-wrapper.with-button .status-icon {
+      right: 120px;
+    }
+  </style>
+</head>
+<body>
+  <!-- AI 配置部分 -->
+  <div class="section">
+    <div class="section-title">AI 配置</div>
+    
+    <div class="form-group">
+      <label for="aiProvider">选择 AI 提供商</label>
+      <select id="aiProvider" class="model-select">
+        <option value="">请选择 AI 提供商</option>
+        <option value="aliyun">阿里云百炼/通义千问</option>
+        <option value="deepseek">DeepSeek</option>
+        <option value="openai">OpenAI</option>
+        <option value="volcengine">火山引擎</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label for="aiApiKey">API Key</label>
+      <div class="input-wrapper">
+        <input type="text" id="aiApiKey" placeholder="输入 API Key">
+        <span class="status-icon">✓</span>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label for="aiApiEndpoint">API 地址</label>
+      <div class="input-wrapper">
+        <input type="text" id="aiApiEndpoint" placeholder="输入 API 地址">
+        <span class="status-icon">✓</span>
+      </div>
+      <small class="help-text endpoint-help"></small>
+    </div>
+
+    <div class="form-group">
+      <label for="aiModel">模型名称</label>
+      <select id="aiModel" class="model-select">
+        <option value="">请先选择 AI 提供商</option>
+      </select>
+      <small class="help-text">不同提供商支持的模型可能不同</small>
+    </div>
+
+    <button id="saveAiConfig">保存 AI 配置</button>
+  </div>
+
+  <!-- Notion 配置部分 -->
+  <div class="section">
+    <div class="section-title">Notion 配置</div>
+    
+    <div class="form-group">
+      <label for="notionToken">Notion Token</label>
+      <div class="input-wrapper with-button">
+        <input type="password" id="notionToken" placeholder="输入 Notion Internal Integration Token">
+        <button id="verifyToken">验证</button>
+        <span class="status-icon">✓</span>
+      </div>
+      <small class="help-text">在 Notion Developers 页面获取 Integration Token</small>
+    </div>
+
+    <div class="form-group">
+      <label for="notionDbId">选择数据库</label>
+      <div class="database-controls">
+        <select id="notionDbId" disabled>
+          <option value="">请先验证 Token</option>
+        </select>
+        <button id="refreshDatabases" disabled>刷新列表</button>
+      </div>
+      <div class="input-wrapper">
+        <span class="status-icon">✓</span>
+      </div>
+      <small class="help-text">
+        提示：首次使用需要将 Integration 添加到数据库的连接中，然后点击刷新列表
+      </small>
+    </div>
+
+    <button id="saveNotionConfig">保存 Notion 配置</button>
+  </div>
+
+  <div id="status"></div>
+
+  <script src="options.js"></script>
+</body>
+</html>
