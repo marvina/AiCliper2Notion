@@ -368,7 +368,6 @@ ${cleanContent.substring(0, 3000)}`
             const cleanPoint = point
               .replace(/^[-•\d\.\s]+/, '') // 移除前缀符号
               .replace(/^###\s*/, '') // 移除 markdown 标记
-              .replace(/\*\*(.*?)\*\*/, '$1') // 移除加粗标记
               .trim();
             return `${index + 1}. ${cleanPoint}`;
           })
@@ -385,7 +384,6 @@ ${cleanContent.substring(0, 3000)}`
             const cleanPoint = point
               .replace(/^[-•\d\.\s]+/, '')
               .replace(/^###\s*/, '')
-              .replace(/\*\*(.*?)\*\*/, '$1') // 移除加粗标记
               .trim();
             return `${index + 1}. ${cleanPoint}`;
           })
@@ -416,21 +414,107 @@ ${cleanContent.substring(0, 3000)}`
 
 async function saveToNotion(data) {
   try {
-    const response = await fetch('https://api.notion.com/v1/pages', {
+    // 创建 Notion 页面
+    const notionPage = {
+      parent: { database_id: config.notionDbId },
+      properties: {
+        Title: {
+          title: [
+            {
+              text: {
+                content: data.title || '无标题'
+              }
+            }
+          ]
+        },
+        URL: {
+          url: data.url
+        },
+        Summary: {
+          rich_text: [{ text: { content: data.summary || '无摘要' } }]
+        },
+        Highlights: {
+          rich_text: [{ text: { content: data.outline || '无亮点' } }]
+        }
+      }
+    };
+
+    // 创建页面
+    const pageResponse = await fetch('https://api.notion.com/v1/pages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${config.notionToken}`,
         'Notion-Version': '2022-06-28'
       },
-      body: JSON.stringify(data)
+      body: JSON.stringify(notionPage)
     });
 
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(`Notion保存失败: ${error.message || response.status}`);
+    if (!pageResponse.ok) {
+      const error = await pageResponse.json();
+      throw new Error(`Notion页面创建失败: ${error.message || pageResponse.status}`);
     }
-    return response.json();
+
+    const pageData = await pageResponse.json();
+    const pageId = pageData.id;
+
+    // 添加内容到页面
+    const blocks = [];
+
+    // 添加网页文本内容
+    blocks.push({
+      type: 'paragraph',
+      paragraph: {
+        rich_text: [{ text: { content: data.content } }]
+      }
+    });
+
+    // 添加主图片（如果有）
+    if (data.image) {
+      blocks.push({
+        type: 'image',
+        image: {
+          type: 'external',
+          external: { url: data.image }
+        }
+      });
+    }
+
+    // 添加其他图片
+    if (data.images && Array.isArray(data.images)) {
+      data.images.forEach((img) => {
+        if (img && img !== data.image) { // 避免重复添加主图片
+          blocks.push({
+            type: 'image',
+            image: {
+              type: 'external',
+              external: { url: img }
+            }
+          });
+        }
+      });
+    }
+
+    // 将块添加到页面
+    const blockResponse = await fetch(`https://api.notion.com/v1/blocks/${pageId}/children`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${config.notionToken}`,
+        'Notion-Version': '2022-06-28'
+      },
+      body: JSON.stringify({
+        children: blocks
+      })
+    });
+
+    if (!blockResponse.ok) {
+      const error = await blockResponse.json();
+      throw new Error(`Notion内容添加失败: ${error.message || blockResponse.status}`);
+    }
+
+    addLog('内容成功保存到 Notion');
+    return pageData;
   } catch (error) {
     addLog(`Notion API错误: ${error.message}`, 'error');
     throw error;
