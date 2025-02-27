@@ -139,6 +139,7 @@ async function handleSaveRequest(tabId, sendResponse) {
     
     sendResponse({ success: true });
     addLog('保存成功');
+    chrome.runtime.sendMessage({ action: 'taskCompleted' }).catch(() => {});
   } catch (error) {
     addLog(`保存失败: ${error.message}`, 'error');
     sendResponse({ success: false, error: error.message });
@@ -272,11 +273,11 @@ async function processContent(content) {
 ### 重要亮点
 1. <亮点1>
 2. <亮点2>
-3. <亮点3>
+...
 ### 关键词
 <关键词1>
 <关键词2>
-<关键词3>
+...
 
 原文：
 ${cleanContent.substring(0, 3000)}`

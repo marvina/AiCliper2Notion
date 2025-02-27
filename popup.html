@@ -11,7 +11,7 @@
     button {
       width: 100%;
       padding: 10px;
-      background: #48a0ff;
+      background: #a2cbf6;
       color: white;
       border: none;
       border-radius: 5px;
@@ -19,17 +19,27 @@
       margin-bottom: 0;
       position: relative;
       overflow: hidden;
-      transition: width 0.1s linear;
+      transition: background-color 0.3s ease;
     }
-    button.progress::before {
-      content: '';
+    button .progress-bar {
       position: absolute;
-      top: 0;
+      bottom: 0;
       left: 0;
       height: 100%;
-      background-color: #4caf50;
-      width: 0%;
-      transition: width 0.1s linear;
+      background: #499ef9;
+      transition: width 0.5s ease;
+      width: 0;
+      box-shadow: 0 0 2px rgba(255, 255, 255, 0.5);
+      z-index: 1;
+    }
+    button.progress {
+      background: #a2cbf6;
+    }
+    button:hover {
+      background: #499ef9;
+    }
+    button.progress:hover {
+      background: #a2cbf6;
     }
     #logs {
       display: none;
@@ -48,10 +58,26 @@
       display: block;
       margin-top: 10px;
     }
+    button span {
+      display: inline-block;
+      vertical-align: middle;
+      position: relative;
+      z-index: 2;
+    }
+    .progress-text {
+      margin-left: 5px;
+      font-size: 0.9em;
+      opacity: 0.9;
+      color: white;
+      font-weight: bold;
+    }
   </style>
 </head>
 <body>
-  <button id="saveBtn">保存到 Notion</button>
+  <button id="saveBtn">
+    <span>保存到 Notion<span class="progress-text"></span></span>
+    <div class="progress-bar"></div>
+  </button>
   <a id="viewLogs">查看日志</a>
   <div id="logs"></div>
   <script src="popup.js"></script>
