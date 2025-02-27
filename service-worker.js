@@ -149,7 +149,7 @@ async function getPageContent(tabId) {
       function: () => {
         const title = document.title;
         const url = window.location.href;
-
+        
         // 优先选择的CSS选择器列表
         const contentSelectors = [
           'article',
@@ -170,28 +170,37 @@ async function getPageContent(tabId) {
                          document.querySelector('article img')?.src || '';
 
         // 按优先级查找内容区域
-        let mainContent = null;
         let contentText = '';
         let images = [];
 
+        // 检查是否为小红书网站
+        if (window.location.hostname.includes('xiaohongshu.com')) {
+          const noteContent = document.querySelector('.note-content');
+          if (noteContent) {
+            contentText = noteContent.innerText.trim();
+            const imgElements = noteContent.querySelectorAll('img');
+            imgElements.forEach(img => {
+              images.push(img.src);
+            });
+          }
+        } else {
         // 首先尝试使用选择器
         for (const selector of contentSelectors) {
           const element = document.querySelector(selector);
           if (element) {
-            contentText += element.innerText.trim() + '\n';
-            const imgElements = element.querySelectorAll('img');
-            imgElements.forEach(img => {
-              images.push(img.src);
-            });
-            mainContent = element;
-            break;
+              contentText += element.innerText.trim() + '\n';
+              const imgElements = element.querySelectorAll('img');
+              imgElements.forEach(img => {
+                images.push(img.src);
+              });
+              break;
+            }
           }
         }
 
-        // 如果没找到任何内容区域，使用 body
-        if (!mainContent) {
-          mainContent = document.body;
-          contentText += mainContent.innerText.trim() + '\n';
+        // 如果没有找到内容，使用 body
+        if (!contentText) {
+          contentText = document.body.innerText.trim();
         }
 
         // 清理和格式化内容

@@ -1,7 +1,6 @@
 document.addEventListener('DOMContentLoaded', async () => {
   const btn = document.getElementById('saveBtn');
   const viewLogsBtn = document.getElementById('viewLogs');
-  const statusDiv = document.getElementById('status');
   const logsDiv = document.getElementById('logs');
   let logsVisible = false;
 
@@ -9,9 +8,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   async function checkConfig() {
     const config = await chrome.storage.sync.get(['deepseekKey', 'notionToken', 'notionDbId']);
     if (!config.deepseekKey || !config.notionToken || !config.notionDbId) {
-      statusDiv.style.display = 'block';
-      statusDiv.textContent = '请先在扩展选项中配置API';
-      statusDiv.style.background = '#f8d7da';
+      alert('请先在扩展选项中配置API');
       btn.disabled = true;
       return false;
     }
@@ -29,33 +26,51 @@ document.addEventListener('DOMContentLoaded', async () => {
       return;
     }
 
-    statusDiv.style.display = 'block';
-    statusDiv.textContent = '处理中...';
-    statusDiv.style.background = '#fff3cd';
     logsDiv.style.display = 'none';
+    btn.classList.add('progress');
+    btn.style.setProperty('--progress', '0%');
+    btn.textContent = '保存到 Notion';
 
+    let tab, response;
     try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      // 获取当前标签页
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      tab = tabs[0];
       
-      const response = await chrome.runtime.sendMessage({
+      // 定义进度更新函数
+      const startTime = Date.now();
+      const updateProgress = () => {
+        const elapsed = Date.now() - startTime;
+        const percentage = Math.min((elapsed / 15000) * 100, 100); // 假设总时长为15秒
+        btn.style.setProperty('--progress', `${percentage}%`);
+        btn.textContent = percentage === 100 ? '保存成功' : `保存中 ${Math.floor(percentage)}%`;
+        
+        if (percentage < 100 && !response) {
+          requestAnimationFrame(updateProgress);
+        }
+      };
+      
+      // 启动进度更新
+      updateProgress();
+      
+      // 执行保存操作
+      response = await chrome.runtime.sendMessage({
         action: 'processAndSave',
         tabId: tab.id
       });
 
-      if (response.success) {
-        statusDiv.textContent = '保存成功 ✓';
-        statusDiv.style.background = '#d4edda';
-      } else {
+      if (!response.success) {
         throw new Error(response.error || '保存失败');
       }
+      
+      btn.textContent = '保存成功'; // 更新按钮文本
     } catch (error) {
-      statusDiv.textContent = `错误: ${error.message}`;
-      statusDiv.style.background = '#f8d7da';
+      alert(`错误: ${error.message}`);
+      btn.textContent = '保存失败'; // 更新按钮文本为错误信息
+    } finally {
+      // 确保进度条最终状态为100%
+      btn.style.setProperty('--progress', '100%');
     }
-    
-    setTimeout(() => {
-      statusDiv.style.display = 'none';
-    }, 3000);
   });
 
   // 日志按钮逻辑
