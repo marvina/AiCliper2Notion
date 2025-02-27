@@ -56,7 +56,8 @@ document.addEventListener('DOMContentLoaded', () => {
   // 加载已保存的配置
   chrome.storage.sync.get([
     'aiProvider', 'aiApiKey', 'aiApiEndpoint', 'aiModel',
-    'notionToken', 'notionDbId'
+    'notionToken', 'notionDbId',
+    'keywords' // 添加关键词加载
   ], (config) => {
     // AI 配置
     if (config.aiProvider) {
@@ -70,6 +71,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // Notion 配置
     if (config.notionToken) inputs.notionToken.value = config.notionToken;
     if (config.notionDbId) inputs.notionDbId.value = config.notionDbId;
+
+    // 关键词显示
+    if (config.keywords) keywordsDisplay.textContent = `关键词: ${config.keywords}`;
   });
 
   // 监听 Notion Token 输入变化

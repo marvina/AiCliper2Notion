@@ -88,7 +88,7 @@ async function handleSaveRequest(tabId, sendResponse) {
       switch (prop.type) {
         case 'title':
           notionData.properties[key] = {
-            title: [{ text: { content: pageData.title || '无标题' } }]
+            title: [{ text: { content: (pageData.title || '无标题').slice(0, 30) } }]
           };
           break;
         case 'url':
@@ -103,6 +103,10 @@ async function handleSaveRequest(tabId, sendResponse) {
           } else if (key.includes('亮点') || key.includes('要点')) {
             notionData.properties[key] = {
               rich_text: [{ text: { content: processedContent.outline } }]
+            };
+          } else if (key.includes('关键词')) {
+            notionData.properties[key] = {
+              rich_text: [{ text: { content: processedContent.keywords } }]
             };
           }
           break;
@@ -243,11 +247,11 @@ async function processContent(content) {
     const cleanContent = content.replace(/```[\s\S]*?```/g, '')
                                .replace(/`[^`]*`/g, '');
 
-    const requestBody = {
-      model: config.aiModel,
-      messages: [{
-        role: "user",
-        content: `请分析并总结这篇文章：
+      const requestBody = {
+        model: config.aiModel,
+        messages: [{
+          role: "user",
+          content: `请通过三方面分析并总结这篇文章：
 
 1. 全文总结：
 请用一段话概括文章的主要内容。
@@ -257,14 +261,31 @@ async function processContent(content) {
 - 每个亮点是一句话
 - 按重要性排序
 
+3. 关键词：
+- 请提取1-3个关键词
+- 每个关键词是一个单词或短语
+- 按重要性排序
+
+最后按照以下格式输出：
+### 全文总结
+<全文总结>
+### 重要亮点
+1. <亮点1>
+2. <亮点2>
+3. <亮点3>
+### 关键词
+<关键词1>
+<关键词2>
+<关键词3>
+
 原文：
 ${cleanContent.substring(0, 3000)}`
-      }],
-      stream: false,
-      max_tokens: 2000,
-      temperature: 0.7,
-      top_p: 0.9
-    };
+        }],
+        stream: false,
+        max_tokens: 2000,
+        temperature: 0.7,
+        top_p: 0.9
+      };
 
     addLog('发送到 API 的请求:', requestBody);
 
@@ -309,12 +330,16 @@ ${cleanContent.substring(0, 3000)}`
 
     try {
       // 提取总结部分
-      const summaryMatch = resultText.match(/全文总结[：:]([\s\S]*?)(?=\n\d+\.|$)/);
+      const summaryMatch = resultText.match(/###\s*全文总结\s*([\s\S]*?)(?=\n###\s*(重要亮点|关键词)|$)/);
       let summary = summaryMatch ? summaryMatch[1].trim() : '无法提取总结';
 
       // 提取亮点部分
-      const outlineMatch = resultText.match(/重要亮点[：:]([\s\S]*?)$/);
+      const outlineMatch = resultText.match(/###\s*重要亮点\s*([\s\S]*?)(?=\n###\s*(关键词|$))/);
       let outline = outlineMatch ? outlineMatch[1].trim() : '';
+
+      // 提取关键词部分
+      const keywordsMatch = resultText.match(/###\s*关键词\s*([\s\S]*?)(?=\n###\s*|$)/);
+      let keywords = keywordsMatch ? keywordsMatch[1].trim() : '';
 
       // 清理总结中可能包含的亮点部分和标题
       summary = summary
@@ -347,8 +372,8 @@ ${cleanContent.substring(0, 3000)}`
         outline = points
           .map((point, index) => {
             const cleanPoint = point
-              .replace(/^[-•\d\.\s]+/, '')
-              .replace(/^###\s*/, '')
+              .replace(/^[-•\d\.\s]+/, '') // 移除前缀符号
+              .replace(/^###\s*/, '') // 移除 markdown 标记
               .trim();
             return `${index + 1}. ${cleanPoint}`;
           })
@@ -360,15 +385,45 @@ ${cleanContent.substring(0, 3000)}`
           .join('\n');
       }
 
+      // 格式化关键词
+      if (keywords) {
+        // 提取关键词列表
+        const points = keywords.match(/(?:^|\n)[-•\d\.\s]*([^-•\n]+)/g) || [];
+        keywords = points
+          .map((point, index) => {
+            const cleanPoint = point
+              .replace(/^[-•\d\.\s]+/, '') // 移除前缀符号
+              .replace(/^###\s*/, '') // 移除 markdown 标记
+              .trim();
+            return cleanPoint;
+          })
+          .filter(point => point.length > 0) // 过滤掉空字符串
+          .join(', ');
+      }
+
+      // 添加调试日志
+      addLog('提取的关键词:', keywords);
+
+      // 存储关键词到Chrome存储
+      chrome.storage.sync.set({ keywords: keywords }, () => {
+        if (chrome.runtime.lastError) {
+          addLog(`存储关键词失败: ${chrome.runtime.lastError.message}`, 'error');
+        } else {
+          addLog('关键词已存储:', keywords);
+        }
+      });
+
       return {
         summary,
-        outline: outline || '无法提取重要亮点'
+        outline: outline || '无法提取重要亮点',
+        keywords: keywords || '无法提取关键词'
       };
     } catch (parseError) {
       addLog('内容处理失败:', parseError);
       return {
         summary: resultText.substring(0, 1000),
-        outline: '无法提取重要亮点，请检查原文格式'
+        outline: '无法提取重要亮点，请检查原文格式',
+        keywords: '无法提取关键词，请检查原文格式'
       };
     }
   } catch (error) {

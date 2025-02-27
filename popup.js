@@ -36,23 +36,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       // 获取当前标签页
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
       tab = tabs[0];
-      
-      // 定义进度更新函数
-      const startTime = Date.now();
-      const updateProgress = () => {
-        const elapsed = Date.now() - startTime;
-        const percentage = Math.min((elapsed / 15000) * 100, 100); // 假设总时长为15秒
-        btn.style.setProperty('--progress', `${percentage}%`);
-        btn.textContent = percentage === 100 ? '保存成功' : `保存中 ${Math.floor(percentage)}%`;
-        
-        if (percentage < 100 && !response) {
-          requestAnimationFrame(updateProgress);
-        }
-      };
-      
-      // 启动进度更新
-      updateProgress();
-      
+
       // 执行保存操作
       response = await chrome.runtime.sendMessage({
         action: 'processAndSave',
@@ -100,6 +84,25 @@ document.addEventListener('DOMContentLoaded', async () => {
       const logEntry = `[${new Date(message.timestamp).toLocaleTimeString()}] ${message.text}`;
       logsDiv.innerHTML += `<br>${logEntry}`;
       logsDiv.scrollTop = logsDiv.scrollHeight;
+    }
+
+    if (message.action === 'newLog') {
+      const logMessage = message.text;
+
+      const steps = [
+        { message: '开始获取页面内容', percentage: 25 },
+        { message: '开始内容摘要处理', percentage: 50 },
+        { message: '正在保存到Notion...', percentage: 75 },
+        { message: '保存成功', percentage: 100 }
+      ];
+
+      const currentStepIndex = steps.findIndex(step => step.message === logMessage);
+
+      if (currentStepIndex !== -1) {
+        const currentStep = steps[currentStepIndex];
+        btn.style.setProperty('--progress', `${currentStep.percentage}%`);
+        btn.textContent = logMessage;
+      }
     }
   });
 });
