@@ -110,14 +110,42 @@ document.addEventListener('DOMContentLoaded', async () => {
       // 更新按钮文本，保留HTML结构
       const btnSpan = btn.querySelector('span');
       if (btnSpan) {
-        btnSpan.innerHTML = '保存成功<span class="progress-text"></span>';
+        // 获取现有的progress-text元素
+        const progressText = btnSpan.querySelector('.progress-text');
+        // 先清空内容
+        btnSpan.textContent = '';
+        // 添加新的文本节点
+        btnSpan.appendChild(document.createTextNode('保存成功'));
+        // 如果之前有progress-text元素，重新添加它
+        if (progressText) {
+          btnSpan.appendChild(progressText);
+        } else {
+          // 如果没有，创建一个新的
+          const newProgressText = document.createElement('span');
+          newProgressText.className = 'progress-text';
+          btnSpan.appendChild(newProgressText);
+        }
       }
       updateProgress(100);
     } catch (error) {
       alert(`错误: ${error.message}`);
       const btnSpan = btn.querySelector('span');
       if (btnSpan) {
-        btnSpan.innerHTML = '保存失败<span class="progress-text"></span>';
+        // 获取现有的progress-text元素
+        const progressText = btnSpan.querySelector('.progress-text');
+        // 先清空内容
+        btnSpan.textContent = '';
+        // 添加新的文本节点
+        btnSpan.appendChild(document.createTextNode('保存失败'));
+        // 如果之前有progress-text元素，重新添加它
+        if (progressText) {
+          btnSpan.appendChild(progressText);
+        } else {
+          // 如果没有，创建一个新的
+          const newProgressText = document.createElement('span');
+          newProgressText.className = 'progress-text';
+          btnSpan.appendChild(newProgressText);
+        }
       }
       updateProgress(0);
       taskStarted = false; // 在错误时重置状态
@@ -154,10 +182,24 @@ document.addEventListener('DOMContentLoaded', async () => {
         const currentStep = steps[currentStepIndex];
         updateProgress(currentStep.percentage);
         
-        // 更新按钮文本，保留HTML结构
+        // 更新按钮文本，但保留progress-text元素
         const btnSpan = btn.querySelector('span');
         if (btnSpan) {
-          btnSpan.innerHTML = `${logMessage}<span class="progress-text"></span>`;
+          // 获取现有的progress-text元素
+          const progressText = btnSpan.querySelector('.progress-text');
+          // 先清空内容
+          btnSpan.textContent = '';
+          // 添加新的文本节点
+          btnSpan.appendChild(document.createTextNode(logMessage));
+          // 如果之前有progress-text元素，重新添加它
+          if (progressText) {
+            btnSpan.appendChild(progressText);
+          } else {
+            // 如果没有，创建一个新的
+            const newProgressText = document.createElement('span');
+            newProgressText.className = 'progress-text';
+            btnSpan.appendChild(newProgressText);
+          }
         }
       }
     }

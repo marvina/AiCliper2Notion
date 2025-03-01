@@ -5,14 +5,18 @@ let logs = [];
 // 初始化配置
 chrome.storage.sync.get([
   'aiProvider', 'aiApiKey', 'aiApiEndpoint', 'aiModel',
-  'notionToken', 'notionDbId'
+  'notionToken', 'notionDbId',
+  'cloudflareAccountId', 'cloudflareApiToken', 'cloudflareImageId'
 ], (result) => {
   config = result;
   console.log('加载配置:', {
     aiProvider: config.aiProvider || '未设置',
     aiApiKey: config.aiApiKey ? '已设置' : '未设置',
     notionToken: config.notionToken ? '已设置' : '未设置',
-    notionDbId: config.notionDbId || '未设置'
+    notionDbId: config.notionDbId || '未设置',
+    cloudflareAccountId: config.cloudflareAccountId ? '已设置' : '未设置',
+    cloudflareApiToken: config.cloudflareApiToken ? '已设置' : '未设置',
+    cloudflareImageId: config.cloudflareImageId || '未设置'
   });
 });
 
@@ -22,6 +26,37 @@ chrome.storage.onChanged.addListener((changes) => {
     config[key] = newValue;
   }
 });
+
+// 导入Cloudflare服务
+import cloudflareService from './cloudflare.js';
+
+// 处理图片上传
+async function uploadImageToCloudflare(imageUrl) {
+  try {
+    const cloudflareUrl = await cloudflareService.uploadImage(imageUrl);
+    addLog(`图片上传成功: ${cloudflareUrl}`, 'info');
+    return cloudflareUrl;
+  } catch (error) {
+    addLog(`图片上传失败: ${error.message}`, 'error');
+    throw error;
+  }
+}
+
+// 处理所有图片上传
+async function processImages(images) {
+  const processedImages = [];
+  for (const imageUrl of images) {
+    try {
+      const cloudflareUrl = await uploadImageToCloudflare(imageUrl);
+      processedImages.push(cloudflareUrl);
+      addLog(`处理图片成功: ${imageUrl} -> ${cloudflareUrl}`);
+    } catch (error) {
+      addLog(`处理图片失败: ${imageUrl} - ${error.message}`, 'warning');
+      processedImages.push(imageUrl); // 如果上传失败，使用原始URL
+    }
+  }
+  return processedImages;
+}
 
 // 日志系统
 function addLog(message, level = 'info') {
@@ -56,8 +91,9 @@ async function handleSaveRequest(tabId, sendResponse) {
     
     // 检查配置
     if (!config.aiApiKey || !config.aiApiEndpoint || !config.aiModel || 
-        !config.notionToken || !config.notionDbId) {
-      throw new Error('请先完成 AI 和 Notion 配置');
+        !config.notionToken || !config.notionDbId || 
+        !config.cloudflareAccountId || !config.cloudflareApiToken || !config.cloudflareImageId) {
+      throw new Error('请先完成 AI、Notion 和 Cloudflare 配置');
     }
 
     // 获取数据库结构
@@ -77,6 +113,42 @@ async function handleSaveRequest(tabId, sendResponse) {
     addLog('开始内容摘要处理');
     const processedContent = await processContent(pageData.content);
     
+    // 从本地存储获取关键词（如果有）
+    let storedKeywords = '';
+    try {
+      const result = await chrome.storage.local.get(['keywords']);
+      storedKeywords = result.keywords || '';
+      addLog('从本地存储获取的关键词:', storedKeywords);
+    } catch (error) {
+      addLog(`获取存储的关键词失败: ${error.message}`, 'error');
+    }
+    
+    // 使用存储的关键词（如果有）或回退到处理内容中的关键词
+    const keywords = storedKeywords || processedContent.keywords;
+    addLog('最终使用的关键词:', keywords);
+    
+    // 处理图片上传
+    let cloudflareImageUrl = '';
+    let processedImages = [];
+    if (pageData.images && pageData.images.length > 0) {
+      addLog(`开始处理${pageData.images.length}张图片...`);
+      processedImages = await processImages(pageData.images);
+      // 使用第一张图片作为封面
+      cloudflareImageUrl = processedImages[0] || '';
+      addLog('图片处理完成');
+
+      // 替换内容中的图片URL
+      let markdownContent = pageData.contentMarkdown;
+      pageData.images.forEach((originalUrl, index) => {
+        markdownContent = markdownContent.replace(
+          new RegExp(originalUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'),
+          processedImages[index]
+        );
+      });
+      pageData.contentMarkdown = markdownContent;
+      addLog('已更新内容中的图片URL');
+    }
+
     // 构建Notion数据
     const notionData = {
       parent: { database_id: config.notionDbId },
@@ -106,7 +178,7 @@ async function handleSaveRequest(tabId, sendResponse) {
             };
           } else if (key.includes('关键词')) {
             notionData.properties[key] = {
-              rich_text: [{ text: { content: processedContent.keywords } }]
+              rich_text: [{ text: { content: keywords } }]
             };
           }
           break;
@@ -116,9 +188,9 @@ async function handleSaveRequest(tabId, sendResponse) {
           };
           break;
         case 'files':
-          if (pageData.image) {
+          if (cloudflareImageUrl) {
             notionData.properties[key] = {
-              files: [{ name: 'cover', external: { url: pageData.image } }]
+              files: [{ name: 'cover', external: { url: cloudflareImageUrl } }]
             };
           }
           break;
@@ -129,13 +201,22 @@ async function handleSaveRequest(tabId, sendResponse) {
     addLog('数据库字段映射:', {
       title: Object.keys(schema).find(key => schema[key].type === 'title'),
       summary: Object.keys(schema).find(key => schema[key].type === 'rich_text' && (key.includes('摘要') || key.includes('总结'))),
-      highlights: Object.keys(schema).find(key => schema[key].type === 'rich_text' && (key.includes('亮点') || key.includes('要点')))
+      highlights: Object.keys(schema).find(key => schema[key].type === 'rich_text' && (key.includes('亮点') || key.includes('要点'))),
+      keywords: Object.keys(schema).find(key => schema[key].type === 'rich_text' && key.includes('关键词'))
     });
 
     // 保存到Notion
     addLog('正在保存到Notion...');
     addLog('保存数据:', notionData);
     await saveToNotion(notionData, pageData);
+    
+    // 清理本地存储的关键词
+    try {
+      await chrome.storage.local.remove(['keywords']);
+      addLog('已清理本地存储的关键词');
+    } catch (error) {
+      addLog(`清理关键词失败: ${error.message}`, 'warning');
+    }
     
     sendResponse({ success: true });
     addLog('保存成功');
@@ -175,25 +256,31 @@ async function getPageContent(tabId) {
                          document.querySelector('article img')?.src || '';
 
         // 按优先级查找内容区域
+        let contentElement = null;
         let contentText = '';
+        let contentHtml = '';
         let images = [];
 
         // 检查是否为小红书网站
         if (window.location.hostname.includes('xiaohongshu.com')) {
           const noteContent = document.querySelector('.note-content');
           if (noteContent) {
+            contentElement = noteContent;
             contentText = noteContent.innerText.trim();
+            contentHtml = noteContent.innerHTML;
             const imgElements = noteContent.querySelectorAll('img');
             imgElements.forEach(img => {
               images.push(img.src);
             });
           }
         } else {
-        // 首先尝试使用选择器
-        for (const selector of contentSelectors) {
-          const element = document.querySelector(selector);
-          if (element) {
-              contentText += element.innerText.trim() + '\n';
+          // 首先尝试使用选择器
+          for (const selector of contentSelectors) {
+            const element = document.querySelector(selector);
+            if (element) {
+              contentElement = element;
+              contentText = element.innerText.trim();
+              contentHtml = element.innerHTML;
               const imgElements = element.querySelectorAll('img');
               imgElements.forEach(img => {
                 images.push(img.src);
@@ -204,16 +291,132 @@ async function getPageContent(tabId) {
         }
 
         // 如果没有找到内容，使用 body
-        if (!contentText) {
+        if (!contentElement) {
+          contentElement = document.body;
           contentText = document.body.innerText.trim();
+          contentHtml = document.body.innerHTML;
         }
 
         // 清理和格式化内容
         contentText = contentText.replace(/[\n]{3,}/g, '\n\n').trim();
+        
+        // 将HTML转换为Markdown
+        function htmlToMarkdown(element) {
+          if (!element) return '';
+          
+          // 创建一个文档片段来处理内容
+          const clone = element.cloneNode(true);
+          
+          // 处理标题
+          const headings = clone.querySelectorAll('h1, h2, h3, h4, h5, h6');
+          headings.forEach(heading => {
+            const level = parseInt(heading.tagName[1]);
+            const hashes = '#'.repeat(level);
+            heading.outerHTML = `\n${hashes} ${heading.textContent.trim()}\n`;
+          });
+          
+          // 处理段落
+          const paragraphs = clone.querySelectorAll('p');
+          paragraphs.forEach(p => {
+            p.outerHTML = `\n${p.textContent.trim()}\n`;
+          });
+          
+          // 处理列表
+          const listItems = clone.querySelectorAll('li');
+          listItems.forEach(item => {
+            const parent = item.parentElement;
+            const prefix = parent.tagName === 'OL' ? '1. ' : '- ';
+            item.outerHTML = `${prefix}${item.textContent.trim()}\n`;
+          });
+          
+          // 处理链接
+          const links = clone.querySelectorAll('a');
+          links.forEach(link => {
+            const text = link.textContent.trim();
+            const href = link.getAttribute('href');
+            if (href) {
+              link.outerHTML = `[${text}](${href})`;
+            }
+          });
+          
+          // 处理图片
+          const images = clone.querySelectorAll('img');
+          images.forEach(img => {
+            const alt = img.getAttribute('alt') || '';
+            const src = img.getAttribute('src');
+            if (src) {
+              img.outerHTML = `![${alt}](${src})`;
+            }
+          });
+          
+          // 处理粗体文本
+          const boldTexts = clone.querySelectorAll('strong, b');
+          boldTexts.forEach(bold => {
+            bold.outerHTML = `**${bold.textContent.trim()}**`;
+          });
+          
+          // 处理斜体文本
+          const italicTexts = clone.querySelectorAll('em, i');
+          italicTexts.forEach(italic => {
+            italic.outerHTML = `*${italic.textContent.trim()}*`;
+          });
+          
+          // 处理代码块
+          const codeBlocks = clone.querySelectorAll('pre');
+          codeBlocks.forEach(block => {
+            const code = block.textContent.trim();
+            block.outerHTML = `\n\`\`\`\n${code}\n\`\`\`\n`;
+          });
+          
+          // 处理行内代码
+          const inlineCodes = clone.querySelectorAll('code');
+          inlineCodes.forEach(code => {
+            if (!code.closest('pre')) { // 避免重复处理pre>code
+              code.outerHTML = `\`${code.textContent.trim()}\``;
+            }
+          });
+          
+          // 处理引用
+          const blockquotes = clone.querySelectorAll('blockquote');
+          blockquotes.forEach(quote => {
+            const lines = quote.textContent.trim().split('\n');
+            const quotedLines = lines.map(line => `> ${line}`).join('\n');
+            quote.outerHTML = `\n${quotedLines}\n`;
+          });
+          
+          // 处理水平线
+          const hrs = clone.querySelectorAll('hr');
+          hrs.forEach(hr => {
+            hr.outerHTML = '\n---\n';
+          });
+          
+          // 获取处理后的文本内容
+          let markdown = clone.textContent || clone.innerText || '';
+          
+          // 清理多余的空行
+          markdown = markdown.replace(/\n{3,}/g, '\n\n').trim();
+          
+          return markdown;
+        }
+        
+        // 将HTML字符串转换为Markdown
+        function convertHtmlStringToMarkdown(html) {
+          if (!html) return '';
+          
+          // 创建一个临时的div元素
+          const tempDiv = document.createElement('div');
+          tempDiv.innerHTML = html;
+          
+          return htmlToMarkdown(tempDiv);
+        }
+        
+        // 生成Markdown内容
+        const contentMarkdown = htmlToMarkdown(contentElement);
 
         return {
           title: title.trim(),
-          content: contentText.substring(0, 10000), // 限制内容长度
+          content: contentText.substring(0, 10000), // 保留原始文本内容
+          contentMarkdown: contentMarkdown.substring(0, 10000), // 添加Markdown格式内容
           image: mainImage,
           url: url.split('?')[0], // 去除URL参数
           images: images // 返回所有图片
@@ -406,13 +609,13 @@ ${cleanContent.substring(0, 3000)}`
       addLog('提取的关键词:', keywords);
 
       // 存储关键词到Chrome存储
-      chrome.storage.sync.set({ keywords: keywords }, () => {
-        if (chrome.runtime.lastError) {
-          addLog(`存储关键词失败: ${chrome.runtime.lastError.message}`, 'error');
-        } else {
-          addLog('关键词已存储:', keywords);
-        }
-      });
+      try {
+        await chrome.storage.local.set({ keywords: keywords });
+        addLog('关键词已成功存储到本地存储:', keywords);
+      } catch (error) {
+        addLog(`存储关键词失败: ${error.message}`, 'error');
+        throw error;
+      }
 
       return {
         summary,
@@ -457,49 +660,179 @@ async function saveToNotion(data, pageData) {
     // 添加内容到页面
     const blocks = [];
 
-    // 添加网页文本内容
-    console.log('提取的内容:', pageData.content); // 添加调试日志
-    if (pageData.content) {
-      blocks.push({
-        type: 'paragraph',
-        paragraph: {
-          rich_text: [{ text: { content: pageData.content } }] // 直接使用提取的内容
+    // 添加网页文本内容（使用Markdown格式）
+    console.log('提取的Markdown内容:', pageData.contentMarkdown); // 添加调试日志
+    if (pageData.contentMarkdown) {
+      // 将长文本分割成多个小于2000字符的段落块
+      const maxLength = 1900; // 设置略小于2000的限制，留出一些余量
+      let content = pageData.contentMarkdown;
+      
+      // 按段落分割内容
+      const paragraphs = content.split('\n\n');
+      let currentBlock = '';
+      
+      // 处理每个段落，确保每个块不超过最大长度
+      for (const paragraph of paragraphs) {
+        // 如果当前段落本身就超过最大长度，需要进一步分割
+        if (paragraph.length > maxLength) {
+          // 先添加已累积的内容
+          if (currentBlock) {
+            blocks.push({
+              type: 'paragraph',
+              paragraph: {
+                rich_text: [{ text: { content: currentBlock } }]
+              }
+            });
+            currentBlock = '';
+          }
+          
+          // 分割长段落
+          let remainingText = paragraph;
+          while (remainingText.length > 0) {
+            const chunk = remainingText.substring(0, maxLength);
+            blocks.push({
+              type: 'paragraph',
+              paragraph: {
+                rich_text: [{ text: { content: chunk } }]
+              }
+            });
+            remainingText = remainingText.substring(maxLength);
+          }
+        } 
+        // 如果添加当前段落会超出限制，先创建一个块
+        else if (currentBlock.length + paragraph.length + 2 > maxLength) { // +2 是为了考虑段落之间的换行
+          blocks.push({
+            type: 'paragraph',
+            paragraph: {
+              rich_text: [{ text: { content: currentBlock } }]
+            }
+          });
+          currentBlock = paragraph;
+        } 
+        // 否则将段落添加到当前块
+        else {
+          if (currentBlock) {
+            currentBlock += '\n\n' + paragraph;
+          } else {
+            currentBlock = paragraph;
+          }
         }
-      });
+      }
+      
+      // 添加最后剩余的内容
+      if (currentBlock) {
+        blocks.push({
+          type: 'paragraph',
+          paragraph: {
+            rich_text: [{ text: { content: currentBlock } }]
+          }
+        });
+      }
+    } else if (pageData.content) {
+      // 如果没有Markdown内容，回退到普通文本内容，同样需要分割
+      const maxLength = 1900;
+      let content = pageData.content;
+      
+      // 分割长文本
+      for (let i = 0; i < content.length; i += maxLength) {
+        const chunk = content.substring(i, i + maxLength);
+        blocks.push({
+          type: 'paragraph',
+          paragraph: {
+            rich_text: [{ text: { content: chunk } }]
+          }
+        });
+      }
     } else {
       throw new Error('提取的内容为空，无法添加到 Notion 页面');
     }
 
     // 添加主图片（如果有）
     if (pageData.image) {
-      blocks.push({
-        type: 'image',
-        image: {
-          type: 'external',
-          external: { url: pageData.image }
+      try {
+        // 验证图片URL是否有效
+        const isValidUrl = (url) => {
+          try {
+            new URL(url);
+            return true;
+          } catch (e) {
+            return false;
+          }
+        };
+
+        if (isValidUrl(pageData.image)) {
+          blocks.push({
+            type: 'image',
+            image: {
+              type: 'external',
+              external: { url: pageData.image }
+            }
+          });
+        } else {
+          addLog(`图片URL无效，已跳过添加图片: ${pageData.image}`, 'warning');
         }
-      });
+      } catch (imageError) {
+        // 如果添加图片失败，记录错误但继续处理其他内容
+        addLog(`添加图片失败: ${imageError.message}，已跳过`, 'warning');
+      }
+    }
+
+    // 处理其他图片（如果有）
+    if (pageData.images && Array.isArray(pageData.images)) {
+      for (const imgUrl of pageData.images) {
+        try {
+          // 验证图片URL是否有效
+          const isValidUrl = (url) => {
+            try {
+              new URL(url);
+              return true;
+            } catch (e) {
+              return false;
+            }
+          };
+
+          if (imgUrl && isValidUrl(imgUrl) && imgUrl !== pageData.image) {
+            blocks.push({
+              type: 'image',
+              image: {
+                type: 'external',
+                external: { url: imgUrl }
+              }
+            });
+          }
+        } catch (imageError) {
+          // 如果添加图片失败，记录错误但继续处理其他内容
+          addLog(`添加额外图片失败: ${imageError.message}，已跳过`, 'warning');
+        }
+      }
     }
 
     // 将块添加到页面
-    const blockResponse = await fetch(`https://api.notion.com/v1/blocks/${pageId}/children`, {
-      method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${config.notionToken}`,
-        'Notion-Version': '2022-06-28'
-      },
-      body: JSON.stringify({
-        children: blocks
-      })
-    });
+    try {
+      const blockResponse = await fetch(`https://api.notion.com/v1/blocks/${pageId}/children`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${config.notionToken}`,
+          'Notion-Version': '2022-06-28'
+        },
+        body: JSON.stringify({
+          children: blocks
+        })
+      });
 
-    if (!blockResponse.ok) {
-      const error = await blockResponse.json();
-      throw new Error(`Notion内容添加失败: ${error.message || blockResponse.status}`);
+      if (!blockResponse.ok) {
+        const error = await blockResponse.json();
+        addLog(`Notion内容添加部分失败: ${error.message || blockResponse.status}`, 'warning');
+        // 不抛出错误，因为页面已经创建成功，只是内容添加有问题
+      } else {
+        addLog('内容成功保存到 Notion');
+      }
+    } catch (blockError) {
+      addLog(`添加内容块时出错: ${blockError.message}，但页面已创建`, 'warning');
+      // 不抛出错误，因为页面已经创建成功
     }
 
-    addLog('内容成功保存到 Notion');
     return createdPageData;
   } catch (error) {
     addLog(`Notion API错误: ${error.message}`, 'error');

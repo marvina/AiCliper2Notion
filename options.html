@@ -150,6 +150,7 @@
   </style>
 </head>
 <body>
+
   <!-- AI 配置部分 -->
   <div class="section">
     <div class="section-title">AI 配置</div>
@@ -184,9 +185,10 @@
 
     <div class="form-group">
       <label for="aiModel">模型名称</label>
-      <select id="aiModel" class="model-select">
-        <option value="">请先选择 AI 提供商</option>
-      </select>
+      <div class="input-wrapper">
+        <input type="text" id="aiModel" placeholder="请输入模型名称">
+        <span class="status-icon">✓</span>
+      </div>
       <small class="help-text">不同提供商支持的模型可能不同</small>
     </div>
 
@@ -224,6 +226,67 @@
     </div>
 
     <button id="saveNotionConfig">保存 Notion 配置</button>
+  </div>
+
+  <!-- Cloudflare 配置部分 -->
+  <div class="section">
+    <div class="section-title">Cloudflare 配置</div>
+    
+    <div class="form-group">
+      <label for="cloudflareAccountId">账户 ID</label>
+      <div class="input-wrapper">
+        <input type="text" id="cloudflareAccountId" placeholder="输入 Cloudflare 账户 ID">
+        <span class="status-icon">✓</span>
+      </div>
+      <small class="help-text">在 Cloudflare 控制面板右侧可以找到账户 ID</small>
+    </div>
+
+    <div class="form-group">
+      <label for="cloudflareApiToken">API 令牌</label>
+      <div class="input-wrapper">
+        <input type="password" id="cloudflareApiToken" placeholder="输入 Cloudflare API 令牌">
+        <span class="status-icon">✓</span>
+      </div>
+      <small class="help-text">在 Cloudflare 的 API 令牌页面生成具有 R2 和 Images 权限的令牌</small>
+    </div>
+
+    <div class="form-group">
+      <label for="s3BucketName">R2 存储桶名称</label>
+      <div class="input-wrapper">
+        <input type="text" id="s3BucketName" placeholder="输入 R2 存储桶名称">
+        <span class="status-icon">✓</span>
+      </div>
+      <small class="help-text">您的 Cloudflare R2 存储桶名称</small>
+    </div>
+
+    <div class="form-group">
+      <label for="s3AccessKeyId">R2 Access Key ID</label>
+      <div class="input-wrapper">
+        <input type="text" id="s3AccessKeyId" placeholder="输入 R2 Access Key ID">
+        <span class="status-icon">✓</span>
+      </div>
+      <small class="help-text">在 R2 设置中创建的 Access Key ID</small>
+    </div>
+
+    <div class="form-group">
+      <label for="s3SecretKey">R2 Secret Access Key</label>
+      <div class="input-wrapper">
+        <input type="password" id="s3SecretKey" placeholder="输入 R2 Secret Access Key">
+        <span class="status-icon">✓</span>
+      </div>
+      <small class="help-text">在 R2 设置中创建的 Secret Access Key</small>
+    </div>
+
+    <div class="form-group">
+      <label for="s3Domain">关联域名</label>
+      <div class="input-wrapper">
+        <input type="text" id="s3Domain" placeholder="输入关联域名">
+        <span class="status-icon">✓</span>
+      </div>
+      <small class="help-text">与存储桶关联的域名</small>
+    </div>
+
+    <button id="saveCloudflareConfig">保存 Cloudflare 配置</button>
   </div>
 
   <div id="status"></div>
