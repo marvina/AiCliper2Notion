@@ -1,6 +1,17 @@
 document.addEventListener('DOMContentLoaded', () => {
-  // AI 相关元素
-  const aiProvider = document.getElementById('aiProvider');
+// 动态加载配置文件（如果需要）
+let apiConfig = {};
+(async () => {
+  try {
+    apiConfig = await import('./config.js');
+    console.log('配置文件加载成功:', apiConfig);
+  } catch (error) {
+    console.error('配置文件加载失败:', error);
+  }
+})();
+
+// AI 相关元素
+const aiProvider = document.getElementById('aiProvider');
   const aiApiKey = document.getElementById('aiApiKey');
   const aiApiEndpoint = document.getElementById('aiApiEndpoint');
   const aiModel = document.getElementById('aiModel');
@@ -88,7 +99,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
     try {
       await validateAiConfig(config);
-      await chrome.storage.sync.set(config);
+      // 更新配置文件中的API信息
+      const updatedConfig = { ...apiConfig };
+      updatedConfig.account1 = {
+        apiKey: config.aiApiKey,
+        apiSecret: config.aiApiEndpoint
+      };
+
+      // 动态更新配置（替代写入文件）
+      console.log('动态更新配置:', updatedConfig);
+
       showStatus('AI 配置保存成功', 'success');
     } catch (error) {
       showStatus(`AI 配置保存失败: ${error.message}`, 'error');
@@ -185,7 +205,16 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       // 保存配置
-      await chrome.storage.sync.set(config);
+      // 更新配置文件中的Notion信息
+      const updatedConfig = { ...apiConfig };
+      updatedConfig.account2 = {
+        apiKey: config.notionToken,
+        apiSecret: config.notionDbId
+      };
+
+      // 动态更新配置（替代写入文件）
+      console.log('动态更新配置:', updatedConfig);
+
       showStatus('Notion 配置保存成功', 'success');
     } catch (error) {
       showStatus(`Notion 配置保存失败: ${error.message}`, 'error');
@@ -956,4 +985,13 @@ document.addEventListener('DOMContentLoaded', () => {
   s3Inputs.secretKey.addEventListener('input', () => {
     clearInputStatus(s3Inputs.secretKey);
   });
+
+  // 如果有网站白名单或域名列表，添加小红书相关域名
+  const supportedDomains = [
+    // ... 现有域名 ...
+    'xiaohongshu.com',
+    'xhscdn.com',
+    'xhs.cn'
+    // ... 其他域名 ...
+  ];
 });

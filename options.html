@@ -278,12 +278,9 @@
     </div>
 
     <div class="form-group">
-      <label for="s3Domain">关联域名</label>
-      <div class="input-wrapper">
-        <input type="text" id="s3Domain" placeholder="输入关联域名">
-        <span class="status-icon">✓</span>
-      </div>
-      <small class="help-text">与存储桶关联的域名</small>
+      <label for="s3Domain">S3 域名</label>
+      <input type="text" id="s3Domain" class="form-control" placeholder="例如: account-id.r2.cloudflarestorage.com">
+      <small class="form-text text-muted">输入您的 Cloudflare R2 域名，不要包含 https:// 前缀</small>
     </div>
 
     <button id="saveCloudflareConfig">保存 Cloudflare 配置</button>
@@ -291,6 +288,6 @@
 
   <div id="status"></div>
 
-  <script src="options.js"></script>
+  <script type="module" src="options.js"></script>
 </body>
 </html>

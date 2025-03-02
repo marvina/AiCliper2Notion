@@ -83,6 +83,31 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'getLogs') {
     sendResponse(logs);
   }
+  if (request.action === 'fetchImage') {
+    console.log('后台脚本收到获取图片请求:', request.url);
+    
+    fetch(request.url, { 
+      method: 'GET', 
+      mode: 'cors',
+      headers: request.headers || {}
+    })
+      .then(response => {
+        if (!response.ok) {
+          throw new Error(`获取图片失败: ${response.status} ${response.statusText}`);
+        }
+        return response.blob();
+      })
+      .then(blob => {
+        console.log('图片获取成功，类型:', blob.type, '大小:', blob.size);
+        sendResponse({ success: true, blob: blob });
+      })
+      .catch(error => {
+        console.error('获取图片失败:', error);
+        sendResponse({ success: false, error: error.message });
+      });
+    
+    return true; // 表示异步响应
+  }
 });
 
 async function handleSaveRequest(tabId, sendResponse) {
@@ -208,7 +233,7 @@ async function handleSaveRequest(tabId, sendResponse) {
     // 保存到Notion
     addLog('正在保存到Notion...');
     addLog('保存数据:', notionData);
-    await saveToNotion(notionData, pageData);
+    await saveToNotion(notionData, pageData, processedImages);
     
     // 清理本地存储的关键词
     try {
@@ -636,7 +661,7 @@ ${cleanContent.substring(0, 3000)}`
   }
 }
 
-async function saveToNotion(data, pageData) {
+async function saveToNotion(data, pageData, processedImages) {
   try {
     // 创建 Notion 页面
     const pageResponse = await fetch('https://api.notion.com/v1/pages', {
@@ -660,7 +685,83 @@ async function saveToNotion(data, pageData) {
     // 添加内容到页面
     const blocks = [];
 
-    // 添加网页文本内容（使用Markdown格式）
+    // 先添加主图片（如果有）
+    if (pageData.image) {
+      try {
+        // 验证图片URL是否有效
+        const isValidImageUrl = (url) => {
+          try {
+            const parsedUrl = new URL(url);
+            // 检查URL是否使用HTTPS协议
+            if (parsedUrl.protocol !== 'https:') return false;
+            // 检查URL是否指向图片文件
+            const extension = parsedUrl.pathname.split('.').pop().toLowerCase();
+            const validExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+            return validExtensions.includes(extension);
+          } catch (e) {
+            return false;
+          }
+        };
+
+        if (isValidImageUrl(pageData.image)) {
+          // 确保这里添加的是处理后的图片URL，而不是原始URL
+          const imageUrl = processedImages && processedImages.length > 0 ? 
+                          processedImages[0] : pageData.image;
+          
+          blocks.push({
+            type: 'image',
+            image: {
+              type: 'external',
+              external: { url: imageUrl }
+            }
+          });
+          addLog(`添加主图片到Notion: ${imageUrl}`);
+        }
+      } catch (imageError) {
+        // 如果添加图片失败，记录错误但继续处理其他内容
+        addLog(`添加主图片失败: ${imageError.message}，已跳过`, 'warning');
+      }
+    }
+
+    // 然后添加其他图片（如果有）
+    if (pageData.images && Array.isArray(pageData.images) && processedImages && processedImages.length > 0) {
+      // 使用处理后的图片URL数组，而不是原始URL
+      for (let i = 0; i < processedImages.length; i++) {
+        try {
+          const imgUrl = processedImages[i];
+          // 验证图片URL是否有效
+          const isValidImageUrl = (url) => {
+            try {
+              const parsedUrl = new URL(url);
+              // 检查URL是否使用HTTPS协议
+              if (parsedUrl.protocol !== 'https:') return false;
+              // 检查URL是否指向图片文件
+              const extension = parsedUrl.pathname.split('.').pop().toLowerCase();
+              const validExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+              return validExtensions.includes(extension);
+            } catch (e) {
+              return false;
+            }
+          };
+
+          if (imgUrl && isValidImageUrl(imgUrl) && (i > 0 || imgUrl !== processedImages[0])) {
+            blocks.push({
+              type: 'image',
+              image: {
+                type: 'external',
+                external: { url: imgUrl }
+              }
+            });
+            addLog(`添加额外图片到Notion: ${imgUrl}`);
+          }
+        } catch (imageError) {
+          // 如果添加图片失败，记录错误但继续处理其他内容
+          addLog(`添加额外图片失败: ${imageError.message}，已跳过`, 'warning');
+        }
+      }
+    }
+
+    // 最后添加网页文本内容（使用Markdown格式）
     console.log('提取的Markdown内容:', pageData.contentMarkdown); // 添加调试日志
     if (pageData.contentMarkdown) {
       // 将长文本分割成多个小于2000字符的段落块
@@ -745,66 +846,6 @@ async function saveToNotion(data, pageData) {
       }
     } else {
       throw new Error('提取的内容为空，无法添加到 Notion 页面');
-    }
-
-    // 添加主图片（如果有）
-    if (pageData.image) {
-      try {
-        // 验证图片URL是否有效
-        const isValidUrl = (url) => {
-          try {
-            new URL(url);
-            return true;
-          } catch (e) {
-            return false;
-          }
-        };
-
-        if (isValidUrl(pageData.image)) {
-          blocks.push({
-            type: 'image',
-            image: {
-              type: 'external',
-              external: { url: pageData.image }
-            }
-          });
-        } else {
-          addLog(`图片URL无效，已跳过添加图片: ${pageData.image}`, 'warning');
-        }
-      } catch (imageError) {
-        // 如果添加图片失败，记录错误但继续处理其他内容
-        addLog(`添加图片失败: ${imageError.message}，已跳过`, 'warning');
-      }
-    }
-
-    // 处理其他图片（如果有）
-    if (pageData.images && Array.isArray(pageData.images)) {
-      for (const imgUrl of pageData.images) {
-        try {
-          // 验证图片URL是否有效
-          const isValidUrl = (url) => {
-            try {
-              new URL(url);
-              return true;
-            } catch (e) {
-              return false;
-            }
-          };
-
-          if (imgUrl && isValidUrl(imgUrl) && imgUrl !== pageData.image) {
-            blocks.push({
-              type: 'image',
-              image: {
-                type: 'external',
-                external: { url: imgUrl }
-              }
-            });
-          }
-        } catch (imageError) {
-          // 如果添加图片失败，记录错误但继续处理其他内容
-          addLog(`添加额外图片失败: ${imageError.message}，已跳过`, 'warning');
-        }
-      }
     }
 
     // 将块添加到页面
