@@ -12,7 +12,7 @@
       "url": "url"
     }
   },
-  "host_permissions": ["<all_urls>", "*://*.xiaohongshu.com/*", "*://*.xhscdn.com/*", "*://*.xhs.cn/*"],
+  "host_permissions": ["<all_urls>"],
   "content_scripts": [
     {
       "matches": ["*://*/*"],

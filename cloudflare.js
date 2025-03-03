@@ -60,87 +60,25 @@ class CloudflareImageService {
     try {
       console.log('获取图片:', imageUrl);
       
-      // 检查是否为小红书图片URL
-      const isXiaohongshu = imageUrl.includes('xiaohongshu.com');
-      
-      // 增强针对小红书的请求头
+      // 使用通用的请求头
       const headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
-        'Referer': isXiaohongshu ? 'https://www.xiaohongshu.com/' : imageUrl,
-        'Origin': isXiaohongshu ? 'https://www.xiaohongshu.com' : null,
-        'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-        'sec-ch-ua-mobile': '?0',
-        'sec-ch-ua-platform': '"Windows"',
-        'Sec-Fetch-Dest': 'image',
-        'Sec-Fetch-Mode': 'cors',
-        'Sec-Fetch-Site': isXiaohongshu ? 'same-site' : 'cross-site'
+        'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8'
       };
       
       // 获取图片
-      let response;
-      let blob;
+      const response = await fetch(imageUrl, { 
+        method: 'GET',
+        headers: headers,
+        mode: 'cors',
+        credentials: 'omit'
+      });
       
-      if (isXiaohongshu && chrome.runtime && chrome.runtime.sendMessage) {
-        try {
-          // 通过后台脚本获取图片，添加超时处理
-          const result = await Promise.race([
-            new Promise((resolve) => {
-              chrome.runtime.sendMessage(
-                { action: 'fetchImage', url: imageUrl, headers: headers },
-                (response) => {
-                  console.log('收到后台响应:', response);
-                  resolve(response);
-                }
-              );
-            }),
-            // 5秒超时
-            new Promise((_, reject) => 
-              setTimeout(() => reject(new Error('获取图片超时')), 5000)
-            )
-          ]);
-          
-          // 检查结果是否有效
-          if (result && result.success) {
-            blob = result.blob;
-            console.log('通过后台脚本成功获取图片');
-          } else {
-            // 如果后台获取失败，尝试直接获取
-            console.log('后台获取失败，尝试直接获取图片');
-            throw new Error(result?.error || '后台获取图片失败，将尝试直接获取');
-          }
-        } catch (backendError) {
-          console.warn('后台获取图片失败，尝试直接获取:', backendError);
-          
-          // 直接获取图片作为备选方案
-          response = await fetch(imageUrl, { 
-            method: 'GET',
-            headers: headers,
-            mode: 'cors',
-            credentials: 'omit'
-          });
-          
-          if (!response.ok) {
-            throw new Error(`获取图片失败: ${response.status} ${response.statusText}`);
-          }
-          
-          blob = await response.blob();
-        }
-      } else {
-        // 常规获取方式
-        response = await fetch(imageUrl, { 
-          method: 'GET',
-          headers: headers,
-          mode: 'cors',
-          credentials: 'omit'
-        });
-        
-        if (!response.ok) {
-          throw new Error(`获取图片失败: ${response.status} ${response.statusText}`);
-        }
-        
-        blob = await response.blob();
+      if (!response.ok) {
+        throw new Error(`获取图片失败: ${response.status} ${response.statusText}`);
       }
+      
+      const blob = await response.blob();
       
       console.log('图片获取成功，类型:', blob.type);
       
@@ -332,54 +270,3 @@ class CloudflareImageService {
 // 导出服务实例
 const cloudflareService = new CloudflareImageService();
 export default cloudflareService;
-
-// 添加对小红书网站的特殊处理
-function extractXiaohongshuImages() {
-  const images = [];
-  
-  // 尝试从meta标签获取og:image
-  const ogImageMeta = document.querySelector('meta[property="og:image"], meta[name="og:image"]');
-  if (ogImageMeta && ogImageMeta.content) {
-    images.push(ogImageMeta.content);
-  }
-  
-  // 尝试从slider-container中获取图片
-  const sliderContainer = document.querySelector('.slider-container');
-  if (sliderContainer) {
-    const sliderImages = sliderContainer.querySelectorAll('img');
-    sliderImages.forEach(img => {
-      if (img.src) {
-        images.push(img.src);
-      }
-    });
-  }
-  
-  // 尝试获取所有可能的图片容器
-  const possibleContainers = document.querySelectorAll('.note-detail, .note-content, .carousel');
-  possibleContainers.forEach(container => {
-    if (container) {
-      const containerImages = container.querySelectorAll('img');
-      containerImages.forEach(img => {
-        if (img.src) {
-          images.push(img.src);
-        }
-      });
-    }
-  });
-  
-  return images;
-}
-
-// 在主函数中添加对小红书的检测
-function getImages() {
-  // ... 现有代码 ...
-  
-  // 检查是否是小红书网站
-  if (window.location.hostname.includes('xiaohongshu') || 
-      window.location.hostname.includes('xhscdn') || 
-      window.location.hostname.includes('xhs')) {
-    return extractXiaohongshuImages();
-  }
-  
-  // ... 现有代码继续处理其他网站 ...
-}

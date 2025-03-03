@@ -248,64 +248,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  function handleXiaohongshuImages(images) {
-    console.log('处理小红书图片:', images);
-    
-    if (!images || images.length === 0) {
-      console.log('没有找到小红书图片');
-      return;
-    }
-    
-    // 显示找到的图片
-    const imageContainer = document.getElementById('imageContainer');
-    if (imageContainer) {
-      imageContainer.innerHTML = '';
-      
-      images.forEach((imageUrl, index) => {
-        // 创建图片预览
-        const imgElement = document.createElement('img');
-        imgElement.src = imageUrl;
-        imgElement.className = 'preview-image';
-        imgElement.dataset.index = index;
-        imgElement.addEventListener('click', () => {
-          // 处理图片点击事件，例如选择要保存的图片
-          selectImage(imageUrl);
-        });
-        
-        imageContainer.appendChild(imgElement);
-      });
-    }
-  }
-
-  // 修改获取页面内容的函数，添加对小红书的特殊处理
+  // 修改 getPageContent 函数，删除小红书相关的特殊处理
   function getPageContent() {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       const currentTab = tabs[0];
-      const url = currentTab.url;
-      
-      // 检查是否是小红书网站
-      const isXiaohongshu = url.includes('xiaohongshu.com') || 
-                            url.includes('xhscdn.com') || 
-                            url.includes('xhs.cn');
-      
-      if (isXiaohongshu) {
-        console.log('检测到小红书网站，使用特殊处理...');
-        
-        // 向内容脚本发送消息，获取小红书图片
-        chrome.tabs.sendMessage(currentTab.id, { action: 'getXiaohongshuImages' }, (response) => {
-          if (chrome.runtime.lastError) {
-            console.error('获取小红书图片失败:', chrome.runtime.lastError);
-            return;
-          }
-          
-          if (response && response.images) {
-            handleXiaohongshuImages(response.images);
-          }
-        });
-      } else {
-        // 原有的获取页面内容的逻辑
-        // ... 现有代码 ...
-      }
+      // 原有的获取页面内容的逻辑
+      // ... 现有代码 ...
     });
   }
 });

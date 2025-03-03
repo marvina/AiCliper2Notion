@@ -2,6 +2,27 @@
 console.log('[内容脚本v1.4] 已加载');
 
 // 修改为异步函数
+// 在 extractContent 函数顶部添加
+function getPageSpecificSelectors(url) {
+  // 小红书特定适配（与现有逻辑保持兼容）
+  if (url.includes('xiaohongshu.com') || url.includes('xhscdn.com')) {
+    return {
+      imageSelectors: [
+        'img.note-slider-img',
+        'img[data-xhs-img]'
+      ],
+      containerSelectors: ['.note-content', '.note-slider']
+    };
+  }
+  
+  // 保持现有内容选择器逻辑
+  return {
+    imageSelectors: ['img'],
+    containerSelectors: contentSelectors // 使用已有的 contentSelectors 数组
+  };
+}
+
+// 修改现有的图片获取逻辑
 async function extractContent() {
   console.log('[内容脚本] 开始执行提取流程');
   console.debug('当前域名:', window.location.hostname);
@@ -62,86 +83,129 @@ async function extractContent() {
         img.src = imgUrl + (imgUrl.includes('?') ? '&' : '?') + 'nocache=' + Date.now();
       });
     };
-    
-    // 检查是否是小红书页面
-    if (window.location.hostname.includes('xiaohongshu.com')) {
-      // 小红书图片提取逻辑...
-      console.log('[内容脚本] 检测到小红书页面，开始提取图片');
-      
-      // 查找所有可能包含图片的容器
-      const imgContainers = document.querySelectorAll('.img-container, .swiper-slide, .note-content');
-      
-      if (imgContainers.length > 0) {
-        console.log(`[内容脚本] 找到 ${imgContainers.length} 个可能的图片容器`);
-        
-        // 遍历每个容器
-        imgContainers.forEach(container => {
-          // 查找容器内的所有图片
-          const images = container.querySelectorAll('img');
-          
-          // 处理每张图片
-          images.forEach(img => {
-            // 检查图片是否已加载且符合尺寸要求
-            if (img.complete && img.naturalWidth >= 800 && img.naturalHeight >= 600) {
-              console.log(`[内容脚本] 已加载图片符合尺寸: ${img.src} (${img.naturalWidth}x${img.naturalHeight})`);
-              tempImages.push(img.src);
-            } 
-            // 对于未完全加载或尺寸不符合要求的图片，检查data-src属性
-            else if (img.dataset.src) {
-              tempImages.push(img.dataset.src);
-            }
-            // 对于未加载完成的图片，也添加到待检查列表
-            else if (img.src && !img.src.includes('data:image') && (!img.complete || img.naturalWidth === 0)) {
-              tempImages.push(img.src);
-            }
-          });
-        });
-      } else {
-        console.log('[内容脚本] 未找到图片容器，尝试获取所有图片');
-        
-        // 获取页面上所有图片
-        const allImgElements = document.querySelectorAll('img');
-        allImgElements.forEach(img => {
-          if (img.src && !img.src.includes('data:image')) {
-            tempImages.push(img.src);
-          } else if (img.dataset.src) {
-            tempImages.push(img.dataset.src);
-          }
-        });
-      }
-    } else {
-      // 非小红书页面的图片提取逻辑
-      console.log('[内容脚本] 非小红书页面，提取所有图片');
-      
-      // 尝试从meta标签获取主图片
-      mainImage = document.querySelector('meta[property="og:image"]')?.content ||
-                 document.querySelector('meta[name="twitter:image"]')?.content || '';
-      
-      if (mainImage) {
-        console.log(`[内容脚本] 从meta标签找到主图片: ${mainImage}`);
-        tempImages.push(mainImage);
+
+    // 获取图片URL的函数
+    // 在getImageUrl函数中添加更多懒加载属性检测
+    function getImageUrl(imgElement) {
+      // 添加更多常见懒加载属性
+      const url = imgElement.src || 
+                imgElement.dataset.src || 
+                imgElement.getAttribute('data-src') ||
+                imgElement.getAttribute('data-lazy-src') || // 新增常见懒加载属性
+                imgElement.getAttribute('data-original') ||  // 新增常见懒加载属性
+                imgElement.currentSrc;
+      // 过滤掉data:URI
+      if (url && !url.startsWith('data:')) {
+        return url;
       }
       
-      // 获取所有图片元素
-      const allImgElements = document.querySelectorAll('img');
-      console.log(`[内容脚本] 页面上找到 ${allImgElements.length} 张图片`);
+      // 如果图片在CSS背景中
+      const style = window.getComputedStyle(imgElement);
+      const bgImage = style.backgroundImage;
+      if (bgImage && bgImage !== 'none') {
+        return bgImage.replace(/^url\(['"]?/, '').replace(/['"]?\)$/, '');
+      }
       
-      allImgElements.forEach(img => {
-        // 检查图片是否已加载且符合尺寸要求
-        if (img.complete && img.naturalWidth >= 800 && img.naturalHeight >= 600) {
-          console.log(`[内容脚本] 已加载图片符合尺寸: ${img.src} (${img.naturalWidth}x${img.naturalHeight})`);
-          tempImages.push(img.src);
-        } 
-        // 对于未完全加载的图片，添加到待检查列表
-        else if (img.src && !img.src.includes('data:image') && (!img.complete || img.naturalWidth === 0)) {
-          tempImages.push(img.src);
-        } 
-        // 检查data-src属性（懒加载）
-        else if (img.dataset.src) {
-          tempImages.push(img.dataset.src);
+      return null;
+    }
+
+    // 等待图片加载的函数
+    function waitForImageLoad(imgElement) {
+      return new Promise(resolve => {
+        if (imgElement.complete) {
+          resolve(imgElement);
+        } else {
+          imgElement.onload = () => resolve(imgElement);
+          imgElement.onerror = () => resolve(null);
         }
       });
     }
+
+    // 使用正则表达式提取所有可能的图片URL
+    function extractAllImageUrls() {
+      const html = document.documentElement.outerHTML;
+      const imgRegex = /https?:\/\/[^"']+\.(jpe?g|png|gif|webp|svg)(\?[^"']*)?/gi;
+      return [...new Set(Array.from(html.matchAll(imgRegex), m => m[0]))];
+    }
+
+    // 设置MutationObserver监听DOM变化
+    let observedImages = new Set();
+    const observer = new MutationObserver(mutations => {
+      mutations.forEach(mutation => {
+        if (mutation.addedNodes) {
+          mutation.addedNodes.forEach(node => {
+            if (node.nodeName === 'IMG' || (node.querySelectorAll && node.querySelectorAll('img').length > 0)) {
+              const newImages = node.nodeName === 'IMG' ? [node] : Array.from(node.querySelectorAll('img'));
+              newImages.forEach(async img => {
+                const imgUrl = getImageUrl(img);
+                if (imgUrl && !observedImages.has(imgUrl)) {
+                  observedImages.add(imgUrl);
+                  const loadedImg = await waitForImageLoad(img);
+                  if (loadedImg) {
+                    tempImages.push(imgUrl);
+                  }
+                }
+              });
+            }
+          });
+        }
+      });
+    });
+
+    // 修改MutationObserver配置以监听属性变化
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true, // 新增属性变化监听
+      attributeFilter: ['src', 'data-src'] // 监听这些属性的变化
+    });
+
+    // 尝试从meta标签获取主图片
+    mainImage = document.querySelector('meta[property="og:image"]')?.content ||
+               document.querySelector('meta[name="twitter:image"]')?.content || '';
+    
+    if (mainImage) {
+      console.log(`[内容脚本] 从meta标签找到主图片: ${mainImage}`);
+      tempImages.push(mainImage);
+    }
+    
+    // 获取所有图片元素（修复重复声明）
+    const { imageSelectors, containerSelectors } = getPageSpecificSelectors(url);
+    const allImgElements = Array.from(document.querySelectorAll(imageSelectors.join(', ')));
+    console.log(`[内容脚本] 页面上找到 ${allImgElements.length} 张图片`);
+    
+    // 处理所有图片元素
+    for (const img of allImgElements) {
+      const imgUrl = getImageUrl(img);
+      if (imgUrl) {
+        const loadedImg = await waitForImageLoad(img);
+        if (loadedImg) {
+          tempImages.push(imgUrl);
+        }
+      }
+    }
+  
+    // 替换原有的 allImgElements 获取方式
+    const { imageSelectors, containerSelectors } = getPageSpecificSelectors(url);
+    const allImgElements = Array.from(document.querySelectorAll(imageSelectors.join(', ')));
+  
+    // 修改内容区域选择逻辑（删除多余的 return 语句）
+    let mainContent = null;
+    for (const selector of containerSelectors) {
+      const element = document.querySelector(selector);
+      if (element) {
+        mainContent = element;
+        break;
+      }
+    }
+  
+    // 其他网站的适配...
+    return { imageSelectors: ['img'], containerSelectors: ['body'] };
+}
+
+    // 提取页面中所有可能的图片URL
+    const additionalUrls = extractAllImageUrls();
+    tempImages.push(...additionalUrls);
     
     // 去重
     tempImages = [...new Set(tempImages)];
@@ -153,14 +217,14 @@ async function extractContent() {
         const isValidSize = await checkImageSize(imgUrl);
         if (isValidSize) {
           allImages.push(imgUrl);
-        } else {
-          console.log(`[内容脚本] 图片未通过尺寸检查，不添加: ${imgUrl}`);
         }
       } catch (error) {
         console.error(`[内容脚本] 尺寸检查失败: ${imgUrl}`, error);
-        // 出错时不添加图片
       }
     }
+
+    // 清理观察器
+    observer.disconnect();
     
     // 去重
     allImages = [...new Set(allImages)];
