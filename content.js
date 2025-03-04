@@ -61,28 +61,110 @@ async function extractContent() {
 }
 
 // 3. 图片处理相关函数
+async function getFilteredImages() {
+  addLog('开始筛选图片');
+  
+  // 获取所有图片
+  const allImages = getAllImages();
+  addLog(`找到 ${allImages.length} 张原始图片`);
+  
+  // 筛选有效图片
+  const validImages = allImages.filter(img => {
+    // 获取图片尺寸
+    const width = img.naturalWidth || img.width;
+    const height = img.naturalHeight || img.height;
+    
+    // 检查图片 URL
+    const url = getImageUrl(img);
+    if (!url) {
+      addLog(`跳过无效 URL 的图片: ${img.src}`);
+      return false;
+    }
+
+    // 跳过小图片
+    if (width < 800 || height < 600) {
+      addLog(`跳过小图片: ${url} (${width}x${height})`);
+      return false;
+    }
+
+    // 跳过 base64 图片
+    if (url.startsWith('data:')) {
+      addLog(`跳过 base64 图片`);
+      return false;
+    }
+
+    // 检查图片比例
+    const ratio = width / height;
+    if (ratio > 5 || ratio < 0.2) {
+      addLog(`跳过比例异常的图片: ${url} (${width}x${height})`);
+      return false;
+    }
+
+    addLog(`保留有效图片: ${url} (${width}x${height})`);
+    return true;
+  });
+
+  addLog(`筛选后保留 ${validImages.length} 张有效图片`);
+
+  // 获取所有有效图片的 URL
+  const imageUrls = validImages.map(img => getImageUrl(img))
+    .filter(url => url && !url.startsWith('data:'));
+
+  // 去重
+  const uniqueUrls = [...new Set(imageUrls)];
+  addLog(`去重后剩余 ${uniqueUrls.length} 张图片`);
+
+  return uniqueUrls;
+}
+
+function getAllImages() {
+  addLog('开始收集页面所有图片元素');
+  const images = [];
+  
+  function* traverseAllElements(node) {
+    yield node;
+    for (const child of node.children) {
+      yield* traverseAllElements(child);
+    }
+  }
+
+  for (const element of traverseAllElements(document.body)) {
+    if (element.tagName === 'IMG') {
+      images.push(element);
+    }
+  }
+  
+  addLog(`收集到 ${images.length} 个图片元素`);
+  return images;
+}
+
 function getImageUrl(imgElement) {
-  const url = imgElement.src || 
-            imgElement.dataset.src || 
-            imgElement.getAttribute('data-src') ||
-            imgElement.getAttribute('data-lazy-src') ||
-            imgElement.getAttribute('data-original') ||
-            imgElement.currentSrc;
-  
-  if (url && !url.startsWith('data:')) {
-    console.log("[内容脚本] 提取到有效图片 URL:", url);
-    return url;
+  try {
+    const url = imgElement.src || 
+              imgElement.dataset.src || 
+              imgElement.getAttribute('data-src') ||
+              imgElement.getAttribute('data-lazy-src') ||
+              imgElement.getAttribute('data-original') ||
+              imgElement.currentSrc;
+    
+    if (url && !url.startsWith('data:')) {
+      addLog(`提取到图片 URL: ${url}`);
+      return url;
+    }
+    
+    const style = window.getComputedStyle(imgElement);
+    const bgImage = style.backgroundImage;
+    if (bgImage && bgImage !== 'none') {
+      const extractedUrl = bgImage.replace(/^url\(['"]?/, '').replace(/['"]?\)$/, '');
+      addLog(`从背景提取到图片 URL: ${extractedUrl}`);
+      return extractedUrl;
+    }
+    
+    return null;
+  } catch (error) {
+    addLog(`获取图片 URL 失败: ${error.message}`, 'error');
+    return null;
   }
-  
-  const style = window.getComputedStyle(imgElement);
-  const bgImage = style.backgroundImage;
-  if (bgImage && bgImage !== 'none') {
-    const extractedUrl = bgImage.replace(/^url\(['"]?/, '').replace(/['"]?\)$/, '');
-    console.log("[内容脚本] 从背景提取到图片 URL:", extractedUrl);
-    return extractedUrl;
-  }
-  
-  return null;
 }
 
 function waitForImageLoad(imgElement) {
@@ -104,34 +186,6 @@ function waitForImageLoad(imgElement) {
       });
     }
     
-function getAllImages() {
-  const images = [];
-  console.log("[内容脚本] 开始收集所有图片元素");
-  
-  function* traverseAllElements(node) {
-    yield node;
-    for (const child of node.children) {
-      yield* traverseAllElements(child);
-    }
-  }
-
-  for (const element of traverseAllElements(document.body)) {
-    if (element.tagName === 'IMG') {
-      images.push(element);
-    }
-  }
-  
-  console.log("[内容脚本] 收集到图片元素数量:", images.length);
-  return images;
-}
-
-async function getFilteredImages() {
-  addLog('开始获取图片');
-  const images = getAllImages();
-  addLog(`共找到 ${images.length} 张图片`);
-  return images.map(img => img.src);
-}
-
 // 4. DOM 观察相关
 function runWhenDOMReady() {
   console.log("[内容脚本] DOM 加载完成，开始提取图片");

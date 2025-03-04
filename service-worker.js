@@ -55,7 +55,10 @@ async function fetchImage(url, headers) {
 async function uploadImageToCloudflare(imageUrl) {
   try {
     addLog(`开始上传图片: ${imageUrl}`);
+    
+    // 使用 cloudflareService 上传
     const cloudflareUrl = await cloudflareService.uploadImage(imageUrl);
+    
     addLog(`图片上传成功: ${cloudflareUrl}`);
     return cloudflareUrl;
   } catch (error) {
@@ -117,8 +120,10 @@ async function processImages(images) {
     addLog(`开始处理 ${images.length} 张图片`);
     
     // 处理每张图片
-    const processPromises = images.map(async (imageUrl) => {
+    const processPromises = images.map(async (imageUrl, index) => {
       try {
+        addLog(`处理第 ${index + 1}/${images.length} 张图片: ${imageUrl}`);
+        
         // 先查找是否已上传
         const existingUrl = await getCloudflareImageUrl(imageUrl);
         if (existingUrl) {
@@ -127,9 +132,12 @@ async function processImages(images) {
         }
         
         // 如果没有找到，则上传新图片
-        return await uploadImageToCloudflare(imageUrl);
+        addLog(`开始上传新图片: ${imageUrl}`);
+        const uploadedUrl = await uploadImageToCloudflare(imageUrl);
+        addLog(`新图片上传成功: ${uploadedUrl}`);
+        return uploadedUrl;
       } catch (error) {
-        addLog(`单张图片处理失败: ${error.message}`, 'warning');
+        addLog(`第 ${index + 1} 张图片处理失败: ${error.message}`, 'warning');
         return null;
       }
     });
@@ -176,7 +184,7 @@ async function saveToNotion(data, pageData, processedImages) {
   // ... 保存到 Notion 函数实现 ...
 }
 
-// 5. 内容处理函数
+// 5. 内容总结处理函数
 async function processContent(content) {
   try {
     console.log('[AI处理] 开始内容摘要处理');
@@ -334,7 +342,7 @@ async function getPageContent(tabId) {
             files: ['content.js']
           });
           await new Promise(r => setTimeout(r, 500));
-            } catch (e) {
+          } catch (e) {
           reject(new Error('内容脚本注入失败'));
         }
       };
@@ -375,7 +383,7 @@ async function getPageContent(tabId) {
   }
 }
 
-// 6. 主要处理函数
+// 6. 主要处理保存函数
 async function handleSaveRequest(tabId, sendResponse) {
   try {
     addLog('开始处理保存请求');
@@ -477,8 +485,8 @@ async function handleSaveRequest(tabId, sendResponse) {
         }
       }, {
         object: 'block',
-        type: 'paragraph',
-        paragraph: {
+            type: 'paragraph',
+            paragraph: {
           rich_text: [{ type: 'text', text: { content: processedContent.summary } }]
         }
       });
