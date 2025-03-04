@@ -100,10 +100,10 @@ function waitForImageLoad(imgElement) {
         console.log("[内容脚本] 图片加载失败:", imgElement.src);
         resolve(null);
       };
+        }
+      });
     }
-  });
-}
-
+    
 function getAllImages() {
   const images = [];
   console.log("[内容脚本] 开始收集所有图片元素");
@@ -197,7 +197,7 @@ function runWhenDOMReady() {
 // 5. 消息处理
 const messageListener = (request, sender, sendResponse) => {
   console.log('[内容脚本] 收到消息:', request.action);
-
+  
   if (request.action === 'getPageContent') {
     console.log('[内容脚本] 开始提取内容');
     
@@ -243,6 +243,7 @@ chrome.runtime.sendMessage({
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'ping') {
     sendResponse({ status: 'alive' });
-    return true;
+  return true;
   }
 });
+
