@@ -1,6 +1,107 @@
 // 提取页面核心内容
 console.log('[内容脚本v1.4] 已加载');
 
+// Move utility functions to the top level
+// 获取图片URL的函数
+function getImageUrl(imgElement) {
+  console.log("[内容脚本] 发现图片元素：", imgElement);
+
+  const url = imgElement.src || 
+            imgElement.dataset.src || 
+            imgElement.getAttribute('data-src') ||
+            imgElement.getAttribute('data-lazy-src') ||
+            imgElement.getAttribute('data-original') ||
+            imgElement.currentSrc;
+  console.log("[内容脚本] 提取到的 URL：", url);
+  
+  if (url && !url.startsWith('data:')) {
+    return url;
+  }
+  
+  const style = window.getComputedStyle(imgElement);
+  const bgImage = style.backgroundImage;
+  if (bgImage && bgImage !== 'none') {
+    return bgImage.replace(/^url\(['"]?/, '').replace(/['"]?\)$/, '');
+  }
+  
+  return null;
+}
+
+// 等待图片加载的函数
+function waitForImageLoad(imgElement) {
+  return new Promise(resolve => {
+    if (imgElement.complete) {
+      resolve(imgElement);
+    } else {
+      imgElement.onload = () => resolve(imgElement);
+      imgElement.onerror = () => resolve(null);
+    }
+  });
+}
+
+// Add runWhenDOMReady function definition before its usage
+function runWhenDOMReady() {
+  console.log("[内容脚本] DOM 加载完成，开始提取图片");
+  
+  // 初始化图片集合
+  let observedImages = new Set();
+  let tempImages = [];  // 添加tempImages声明
+  
+  // 修改 MutationObserver 的处理逻辑
+  const observer = new MutationObserver(mutations => {
+    mutations.forEach(mutation => {
+      if (mutation.addedNodes) {
+        mutation.addedNodes.forEach(node => {
+          if (node.nodeName === 'IMG' || (node.querySelectorAll && node.querySelectorAll('img').length > 0)) {
+            const newImages = node.nodeName === 'IMG' ? [node] : Array.from(node.querySelectorAll('img'));
+            newImages.forEach(async img => {
+              const imgUrl = getImageUrl(img);
+              if (imgUrl && !observedImages.has(imgUrl)) {
+                console.log("[MutationObserver] 发现新图片:", imgUrl);
+                observedImages.add(imgUrl);
+                const loadedImg = await waitForImageLoad(img);
+                if (loadedImg) {
+                  console.log("[MutationObserver] 图片加载成功:", imgUrl);
+                  tempImages.push(imgUrl);
+                }
+              }
+            });
+          }
+        });
+      }
+    });
+  });
+
+  // 配置和启动观察器
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['src', 'data-src', 'data-original']
+  });
+
+  // 立即获取当前页面的所有图片
+  document.querySelectorAll("img").forEach(async img => {
+    const imgUrl = getImageUrl(img);
+    if (imgUrl && !observedImages.has(imgUrl)) {
+      console.log("[内容脚本] 获取到的初始图片 URL:", imgUrl);
+      observedImages.add(imgUrl);
+      const loadedImg = await waitForImageLoad(img);
+      if (loadedImg) {
+        console.log("[内容脚本] 初始图片加载成功:", imgUrl);
+        tempImages.push(imgUrl);
+      }
+    }
+  });
+}
+
+// Move DOM ready check after function definition
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', runWhenDOMReady);
+} else {
+  runWhenDOMReady(); // 如果 DOM 已经加载完成，直接执行
+}
+
 // 修改为异步函数
 // 在 extractContent 函数顶部添加
 function getPageSpecificSelectors(url) {
@@ -87,6 +188,8 @@ async function extractContent() {
     // 获取图片URL的函数
     // 在getImageUrl函数中添加更多懒加载属性检测
     function getImageUrl(imgElement) {
+      console.log("[内容脚本] 发现图片元素：", imgElement);  // 🔥 打印 img 详细信息
+
       // 添加更多常见懒加载属性
       const url = imgElement.src || 
                 imgElement.dataset.src || 
@@ -94,6 +197,7 @@ async function extractContent() {
                 imgElement.getAttribute('data-lazy-src') || // 新增常见懒加载属性
                 imgElement.getAttribute('data-original') ||  // 新增常见懒加载属性
                 imgElement.currentSrc;
+       console.log("[内容脚本] 提取到的 URL：", url);  // 🔥 打印最终获取到的 URL
       // 过滤掉data:URI
       if (url && !url.startsWith('data:')) {
         return url;
@@ -185,11 +289,7 @@ async function extractContent() {
       }
     }
   
-    // 替换原有的 allImgElements 获取方式
-    const { imageSelectors, containerSelectors } = getPageSpecificSelectors(url);
-    const allImgElements = Array.from(document.querySelectorAll(imageSelectors.join(', ')));
-  
-    // 修改内容区域选择逻辑（删除多余的 return 语句）
+    // 删除重复的声明和获取
     let mainContent = null;
     for (const selector of containerSelectors) {
       const element = document.querySelector(selector);
@@ -199,9 +299,8 @@ async function extractContent() {
       }
     }
   
-    // 其他网站的适配...
-    return { imageSelectors: ['img'], containerSelectors: ['body'] };
-}
+    // Remove this incorrect return statement
+    // return { imageSelectors: ['img'], containerSelectors: ['body'] };
 
     // 提取页面中所有可能的图片URL
     const additionalUrls = extractAllImageUrls();
@@ -236,7 +335,8 @@ async function extractContent() {
     }
 
     // 按优先级查找内容区域
-    let mainContent = null;
+    // Remove the second declaration and just reuse the existing mainContent variable
+    // Remove: let mainContent = null;
     for (const selector of contentSelectors) {
       const element = document.querySelector(selector);
       if (element) {
@@ -263,10 +363,10 @@ async function extractContent() {
 
     return {
       title: title.trim(),
-      content: content.substring(0, 10000), // 限制内容长度
+      content: content.substring(0, 10000),
       image: mainImage,
-      images: allImages, // 返回所有符合尺寸要求的图片
-      url: url.split('?')[0] // 去除URL参数
+      images: allImages,
+      url: url.split('?')[0]
     };
 
   } catch (error) {
