@@ -77,7 +77,7 @@ async function processImages(images) {
     const uploadPromises = images.map(async (imageUrl) => {
       try {
         return await uploadImageToCloudflare(imageUrl);
-      } catch (error) {
+    } catch (error) {
         addLog(`单张图片上传失败: ${error.message}`, 'warning');
         return null;
       }
@@ -214,7 +214,7 @@ ${cleanContent.substring(0, 3000)}`
     console.log('[AI处理] API 返回的内容:', resultText);
 
     // 提取内容
-    const summaryMatch = resultText.match(/###\s*全文总结\s*([\s\S]*?)(?=\n###\s*(重要亮点|关键词)|$)/);
+      const summaryMatch = resultText.match(/###\s*全文总结\s*([\s\S]*?)(?=\n###\s*(重要亮点|关键词)|$)/);
       const outlineMatch = resultText.match(/###\s*重要亮点\s*([\s\S]*?)(?=\n###\s*(关键词|$))/);
       const keywordsMatch = resultText.match(/###\s*关键词\s*([\s\S]*?)(?=\n###\s*|$)/);
 
@@ -268,163 +268,75 @@ async function getPageContent(tabId) {
 
     addLog(`开始获取页面内容，标签页 ID: ${tabId}`);
     
-    // 检查内容脚本是否已加载
-    let contentScriptLoaded = false;
-    try {
-      // 尝试发送一个简单的 ping 消息来检查内容脚本是否已加载
-      await chrome.tabs.sendMessage(tabId, { action: 'ping' });
-      contentScriptLoaded = true;
-      addLog('内容脚本已加载');
-    } catch (error) {
-      addLog('内容脚本未加载，尝试注入...', 'warning');
-      contentScriptLoaded = false;
+    // 新增标签页状态检查
+    const tab = await chrome.tabs.get(tabId);
+    if (!tab?.active) {
+      throw new Error('目标标签页未激活或已关闭');
     }
-    
-    // 如果内容脚本未加载，手动注入
-    if (!contentScriptLoaded) {
-      try {
-        await chrome.scripting.executeScript({
-          target: { tabId },
-          files: ['content.js']
-        });
-        addLog('内容脚本注入成功');
-        
-        // 等待内容脚本初始化
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      } catch (injectError) {
-        addLog(`内容脚本注入失败: ${injectError.message}`, 'error');
-        throw new Error('无法注入内容脚本');
-      }
-    }
-    
-    // 发送获取内容的消息
-    addLog('向内容脚本发送获取内容请求');
-    let response;
-    try {
-      response = await chrome.tabs.sendMessage(tabId, {
-        action: 'getPageContent',
-        includeDetailedLogs: true
-      });
-    } catch (messageError) {
-      addLog(`消息发送失败: ${messageError.message}，尝试备用方法`, 'warning');
-      return await getPageContentFallback(tabId);
-    }
-    
-    if (!response) {
-      addLog('未收到内容脚本响应', 'error');
-      throw new Error('内容脚本未响应');
-    }
-    
-    if (response.error) {
-      addLog(`内容脚本报告错误: ${response.error}`, 'error');
-      throw new Error(response.error);
-    }
-    
-    if (!response.content) {
-      addLog('未能获取到页面内容', 'error');
-      throw new Error('无法提取页面内容');
-    }
-    
-    // 显示图片筛选日志
-    if (response.logs && response.logs.length > 0) {
-      addLog('图片筛选过程日志:');
-      response.logs.forEach((logEntry, index) => {
-        // 只显示前20条和最后5条，避免日志过长
-        if (index < 20 || index > response.logs.length - 6) {
-          addLog(`  ${logEntry}`);
-        } else if (index === 20) {
-          addLog(`  ... (省略 ${response.logs.length - 25} 条) ...`);
+
+    return new Promise((resolve, reject) => {
+      // 添加内容脚本注入保障
+      const ensureContentScript = async () => {
+        try {
+          await chrome.scripting.executeScript({
+            target: { tabId },
+            files: ['content.js']
+          });
+          await new Promise(r => setTimeout(r, 500));
+        } catch (e) {
+          reject(new Error('内容脚本注入失败'));
         }
-      });
-    } else {
-      addLog('警告: 未收到图片筛选日志', 'warning');
-    }
-    
-    addLog('成功获取页面内容');
-    addLog(`获取到的图片数量: ${response.images?.length || 0}`);
-    
-    if (response.images && response.images.length > 0) {
-      addLog(`图片列表: ${JSON.stringify(response.images.slice(0, 3))}...`);
-    }
-    
-    return response;
-  } catch (error) {
-    addLog(`内容提取失败: ${error.message}，尝试备用方法`, 'error');
-    if (!tabId) {
-      throw new Error('缺少标签页 ID');
-    }
-    try {
-      return await getPageContentFallback(tabId);
-    } catch (fallbackError) {
-      addLog(`备用方法也失败了: ${fallbackError.message}`, 'error');
-      throw error; // 抛出原始错误
-    }
-  }
-}
+      };
 
-async function getPageContentFallback(tabId) {
-  addLog('使用备用方法提取内容');
-  
-  const [results] = await chrome.scripting.executeScript({
-    target: { tabId },
-    function: () => {
-      // 内联的内容提取逻辑
-      const title = document.title;
-      const url = window.location.href;
-      
-      // 查找主图片
-      const mainImage = document.querySelector('meta[property="og:image"]')?.content ||
-                       document.querySelector('meta[name="twitter:image"]')?.content ||
-                       document.querySelector('article img')?.src || '';
-      
-      // 收集所有图片
-      const images = Array.from(document.querySelectorAll('img'))
-        .map(img => img.src)
-        .filter(src => src && src.startsWith('http'));
-      
-      // 获取内容
-      const contentElement = document.querySelector('article') || 
-                            document.querySelector('.content') || 
-                            document.body;
-      
-      const content = contentElement.innerText
-        .replace(/[\n]{3,}/g, '\n\n')
-        .trim();
+      chrome.tabs.sendMessage(tabId, {
+        action: 'getPageContent'
+      }, async response => {  // ✅ 修复开始：补全回调结构
+        if (chrome.runtime.lastError) {
+          await ensureContentScript();
+          chrome.tabs.sendMessage(tabId, {
+            action: 'getPageContent' 
+          }, secondResponse => {
+            if (chrome.runtime.lastError) {
+              reject(new Error('无法建立通信连接'));
+              return;
+            }
+            // 处理第二次响应
+            if (!secondResponse || !secondResponse.success) {
+              reject(new Error(secondResponse?.error || '内容提取失败'));
+              return;
+            }
+            resolve(secondResponse);
+          });
+          return;
+        }
 
-        return {
-          title: title.trim(),
-        content: content.substring(0, 10000),
-          image: mainImage,
-        images: images,
-        url: url.split('?')[0],
-        logs: ['使用备用方法提取内容']
-        };
-      }
+        // 处理原始响应
+        if (!response || !response.success) {
+          reject(new Error(response?.error || '内容提取失败'));
+          return;
+        }
+        resolve(response);  // ✅ 补全缺失的 resolve
+      });  // ✅ 修复结束：补全回调函数
     });
-
-    if (!results?.result) {
-    addLog('备用方法也失败了', 'error');
-      throw new Error('无法提取页面内容');
-    }
-
-  return results.result;
+  } catch (error) {
+    addLog(`内容提取失败: ${error.message}`, 'error');
+    throw error;
+  }
 }
 
 // 6. 主要处理函数
 async function handleSaveRequest(tabId, sendResponse) {
   try {
     addLog('开始处理保存请求');
-    addLog(`处理标签页 ID: ${tabId}`); // 添加日志
+    addLog(`处理标签页 ID: ${tabId}`);
 
     if (!tabId) {
       throw new Error('缺少标签页 ID');
     }
     
     // 检查配置
-    if (!config.aiApiKey || !config.aiApiEndpoint || !config.aiModel || 
-        !config.notionToken || !config.notionDbId || 
-        !config.cloudflareAccountId || !config.cloudflareApiToken || !config.cloudflareImageId) {
-      throw new Error('请先完成 AI、Notion 和 Cloudflare 配置');
+    if (!config.aiApiKey || !config.notionToken || !config.notionDbId) {
+      throw new Error('请先完成必要配置');
     }
 
     // 获取数据库结构
@@ -435,53 +347,17 @@ async function handleSaveRequest(tabId, sendResponse) {
     // 获取页面内容
     addLog(`开始获取页面内容，标签页 ID: ${tabId}`);
     const pageData = await getPageContent(tabId);
-    addLog('页面内容获取结果', pageData);
     
-    if (!pageData?.content) {
-      throw new Error('无法提取页面内容');
+    // 即使内容提取失败，仍继续处理
+    if (!pageData?.success) {
+      addLog('内容提取失败，将只保存 AI 处理结果', 'warning');
     }
 
-    // 内容处理
+    // 内容处理 - 使用提取的内容或空字符串
     addLog('开始内容摘要处理');
-    const processedContent = await processContent(pageData.content);
+    const processedContent = await processContent(pageData?.content || '');
     
-    // 从本地存储获取关键词（如果有）
-    let storedKeywords = '';
-    try {
-      const result = await chrome.storage.local.get(['keywords']);
-      storedKeywords = result.keywords || '';
-      addLog('从本地存储获取的关键词:', storedKeywords);
-    } catch (error) {
-      addLog(`获取存储的关键词失败: ${error.message}`, 'error');
-    }
-    
-    // 使用存储的关键词（如果有）或回退到处理内容中的关键词
-    const keywords = storedKeywords || processedContent.keywords;
-    addLog('最终使用的关键词:', keywords);
-    
-    // 处理图片上传
-    let cloudflareImageUrl = '';
-    let processedImages = [];
-    if (pageData.images && pageData.images.length > 0) {
-      addLog(`开始处理${pageData.images.length}张图片...`);
-      processedImages = await processImages(pageData.images);
-      // 使用第一张图片作为封面
-      cloudflareImageUrl = processedImages[0] || '';
-      addLog('图片处理完成');
-
-      // 替换内容中的图片URL
-      let markdownContent = pageData.contentMarkdown;
-      pageData.images.forEach((originalUrl, index) => {
-        markdownContent = markdownContent.replace(
-          new RegExp(originalUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'),
-          processedImages[index]
-        );
-      });
-      pageData.contentMarkdown = markdownContent;
-      addLog('已更新内容中的图片URL');
-    }
-
-    // 构建Notion数据
+    // 构建 Notion 数据
     const notionData = {
       parent: { database_id: config.notionDbId },
       properties: {}
@@ -492,14 +368,13 @@ async function handleSaveRequest(tabId, sendResponse) {
       switch (prop.type) {
         case 'title':
           notionData.properties[key] = {
-            title: [{ text: { content: (pageData.title || '无标题').slice(0, 30) } }]
+            title: [{ text: { content: (pageData?.title || '无标题').slice(0, 30) } }]
           };
           break;
         case 'url':
-          notionData.properties[key] = { url: pageData.url };
+          notionData.properties[key] = { url: pageData?.url || window.location.href };
           break;
         case 'rich_text':
-          // 根据字段名称判断内容类型
           if (key.includes('摘要') || key.includes('总结')) {
             notionData.properties[key] = {
               rich_text: [{ text: { content: processedContent.summary } }]
@@ -510,7 +385,7 @@ async function handleSaveRequest(tabId, sendResponse) {
             };
           } else if (key.includes('关键词')) {
             notionData.properties[key] = {
-              rich_text: [{ text: { content: keywords } }]
+              rich_text: [{ text: { content: processedContent.keywords } }]
             };
           }
           break;
@@ -519,17 +394,10 @@ async function handleSaveRequest(tabId, sendResponse) {
             date: { start: new Date().toISOString() }
           };
           break;
-        case 'files':
-          if (cloudflareImageUrl) {
-            notionData.properties[key] = {
-              files: [{ name: 'cover', external: { url: cloudflareImageUrl } }]
-            };
-          }
-          break;
       }
     }
 
-    // 保存到 Notion
+    // 保存到 Notion - 不包含原始内容
     addLog('正在保存到 Notion...');
     const response = await fetch('https://api.notion.com/v1/pages', {
       method: 'POST',
@@ -542,20 +410,15 @@ async function handleSaveRequest(tabId, sendResponse) {
     });
 
     const result = await response.json();
-    
+
     if (!response.ok) {
       throw new Error(`Notion页面创建失败: ${result.message || response.status}`);
     }
 
-    addLog('内容成功保存到 Notion');
-    
-    // 清理本地存储
-      await chrome.storage.local.remove(['keywords']);
-      addLog('已清理本地存储的关键词');
-
+    addLog('AI 处理结果已保存到 Notion');
     sendResponse({
       success: true,
-      message: '保存成功' + (cloudflareImageUrl ? '' : ' (仅文本内容)'),
+      message: pageData?.success ? '完整保存成功' : '仅保存 AI 处理结果',
       notionPageId: result.id
     });
 
@@ -569,6 +432,7 @@ async function handleSaveRequest(tabId, sendResponse) {
 }
 
 // 7. 消息监听器
+// 在消息监听回调中补全闭合
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   console.log('收到消息:', request.action, '发送者:', sender);
 
