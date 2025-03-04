@@ -205,7 +205,7 @@ async function extractContent() {
         img.src = imgUrl + (imgUrl.includes('?') ? '&' : '?') + 'nocache=' + Date.now();
       });
     };
-
+    
     // 使用全局收集的图片
     log(`全局收集的图片数量: ${globalTempImages.length}`);
     
@@ -344,7 +344,7 @@ async function extractContent() {
     const content = mainContent.innerText
       .replace(/[\n]{3,}/g, '\n\n')
       .trim();
-    
+
     // 创建简单的 Markdown 内容
     const contentMarkdown = content
       .split('\n')
@@ -426,7 +426,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             addLog(`内容提取完成，图片数量: ${content.images?.length || 0}`);
             content.logs = detailedLogs;
             console.log('[内容脚本] 准备发送响应');
-            sendResponse(content);
+      sendResponse(content);
             console.log('[内容脚本] 响应发送成功');
           })
           .catch(error => {

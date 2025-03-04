@@ -33,28 +33,92 @@ import cloudflareService from './cloudflare.js';
 // 处理图片上传
 async function uploadImageToCloudflare(imageUrl) {
   try {
-    const cloudflareUrl = await cloudflareService.uploadImage(imageUrl);
-    addLog(`图片上传成功: ${cloudflareUrl}`, 'info');
+    addLog(`开始上传图片到 Cloudflare: ${imageUrl}`);
+    
+    // 检查 URL 是否有效
+    if (!imageUrl || typeof imageUrl !== 'string' || !imageUrl.startsWith('http')) {
+      addLog(`无效的图片 URL: ${imageUrl}`, 'warning');
+      return imageUrl;
+    }
+    
+    // 检查是否已经是 Cloudflare URL
+    if (imageUrl.includes('imagedelivery.net') || 
+        imageUrl.includes('r2.cloudflarestorage.com')) {
+      addLog(`图片已经在 Cloudflare 上，跳过上传: ${imageUrl}`);
+      return imageUrl;
+    }
+    
+    addLog(`正在获取图片数据: ${imageUrl}`);
+    
+    // 获取图片数据
+    const response = await fetch(imageUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+      }
+    });
+    
+    if (!response.ok) {
+      addLog(`获取图片失败: ${imageUrl} - HTTP ${response.status}`, 'error');
+      return imageUrl;
+    }
+    
+    const contentType = response.headers.get('content-type');
+    addLog(`图片类型: ${contentType}`);
+    
+    if (!contentType || !contentType.startsWith('image/')) {
+      addLog(`非图片内容: ${imageUrl} - ${contentType}`, 'warning');
+      return imageUrl;
+    }
+    
+    const blob = await response.blob();
+    addLog(`获取到图片数据: ${blob.size} 字节`);
+    
+    // 上传到 Cloudflare
+    addLog(`开始上传到 Cloudflare...`);
+    const cloudflareUrl = await cloudflareService.uploadImage(imageUrl, blob);
+    
+    if (!cloudflareUrl || cloudflareUrl === imageUrl) {
+      addLog(`上传到 Cloudflare 失败，使用原始 URL: ${imageUrl}`, 'warning');
+      return imageUrl;
+    }
+    
+    addLog(`上传成功: ${imageUrl} -> ${cloudflareUrl}`);
     return cloudflareUrl;
   } catch (error) {
-    addLog(`图片上传失败: ${error.message}`, 'error');
-    throw error;
+    addLog(`上传图片时出错: ${error.message}`, 'error');
+    return imageUrl; // 出错时返回原始URL
   }
 }
 
 // 处理所有图片上传
 async function processImages(images) {
   const processedImages = [];
+  addLog(`开始处理 ${images.length} 张图片`);
+  
+  // 添加进度跟踪
+  let processed = 0;
+  const total = images.length;
+  
   for (const imageUrl of images) {
     try {
+      processed++;
+      addLog(`处理图片 [${processed}/${total}]: ${imageUrl}`);
+      
       const cloudflareUrl = await uploadImageToCloudflare(imageUrl);
       processedImages.push(cloudflareUrl);
-      addLog(`处理图片成功: ${imageUrl} -> ${cloudflareUrl}`);
+      
+      if (cloudflareUrl !== imageUrl) {
+        addLog(`图片处理成功: ${imageUrl} -> ${cloudflareUrl}`);
+      } else {
+        addLog(`图片保持原样: ${imageUrl}`, 'warning');
+      }
     } catch (error) {
       addLog(`处理图片失败: ${imageUrl} - ${error.message}`, 'warning');
       processedImages.push(imageUrl); // 如果上传失败，使用原始URL
     }
   }
+  
+  addLog(`图片处理完成，共 ${processedImages.length} 张`);
   return processedImages;
 }
 
@@ -157,115 +221,351 @@ async function handleSaveRequest(tabId, sendResponse) {
     const keywords = storedKeywords || processedContent.keywords;
     addLog('最终使用的关键词:', keywords);
     
-    // 处理图片上传
+    // 处理图片上传 - 确保所有图片都上传到 Cloudflare
     let cloudflareImageUrl = '';
     let processedImages = [];
+    
     if (pageData.images && pageData.images.length > 0) {
       addLog(`开始处理${pageData.images.length}张图片...`);
-      processedImages = await processImages(pageData.images);
-      // 使用第一张图片作为封面
-      cloudflareImageUrl = processedImages[0] || '';
-      addLog('图片处理完成');
-      addLog(`处理后的图片: ${JSON.stringify(processedImages.slice(0, 3))}...`);
-
-      // 替换内容中的图片URL
-      if (pageData.contentMarkdown) {
-        let markdownContent = pageData.contentMarkdown;
-        pageData.images.forEach((originalUrl, index) => {
-          if (originalUrl && processedImages[index]) {
+      
+      // 确保所有图片都是有效的 URL
+      const validImages = pageData.images.filter(url => 
+        url && typeof url === 'string' && url.startsWith('http')
+      );
+      
+      if (validImages.length !== pageData.images.length) {
+        addLog(`过滤掉 ${pageData.images.length - validImages.length} 个无效图片 URL`, 'warning');
+      }
+      
+      if (validImages.length === 0) {
+        addLog('没有有效的图片可以处理', 'warning');
+      } else {
+        try {
+          // 处理所有有效图片
+          addLog(`开始上传 ${validImages.length} 张图片到 Cloudflare...`);
+          
+          // 逐个处理图片，确保每张图片都有机会上传
+          for (let i = 0; i < validImages.length; i++) {
+            const imageUrl = validImages[i];
             try {
-              const escapedUrl = originalUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-              markdownContent = markdownContent.replace(
-                new RegExp(escapedUrl, 'g'),
-                processedImages[index]
-              );
-            } catch (replaceError) {
-              addLog(`替换图片URL时出错: ${replaceError.message}`, 'warning');
+              addLog(`处理图片 ${i+1}/${validImages.length}: ${imageUrl}`);
+              const cloudflareUrl = await uploadImageToCloudflare(imageUrl);
+              
+              if (cloudflareUrl && cloudflareUrl !== imageUrl) {
+                addLog(`图片上传成功: ${imageUrl} -> ${cloudflareUrl}`);
+                processedImages.push(cloudflareUrl);
+              } else {
+                addLog(`图片上传失败或未更改，使用原始 URL: ${imageUrl}`, 'warning');
+                processedImages.push(imageUrl);
+              }
+            } catch (imgError) {
+              addLog(`处理图片时出错: ${imgError.message}`, 'error');
+              // 出错时使用原始 URL
+              processedImages.push(imageUrl);
             }
           }
-        });
-        pageData.contentMarkdown = markdownContent;
-        addLog('已更新内容中的图片URL');
-      } else {
-        addLog('警告: 没有 Markdown 内容可以更新图片 URL', 'warning');
+          
+          // 验证处理后的图片 URL
+          processedImages = processedImages.filter(url => {
+            const isValid = url && typeof url === 'string' && url.startsWith('http');
+            if (!isValid) {
+              addLog(`过滤无效的处理后图片 URL: ${url}`, 'warning');
+            }
+            return isValid;
+          });
+          
+          // 使用第一张处理后的图片作为封面
+          if (processedImages.length > 0) {
+            cloudflareImageUrl = processedImages[0];
+            addLog(`设置封面图片: ${cloudflareImageUrl}`);
+          } else {
+            addLog('警告: 没有有效的图片可用作封面', 'warning');
+          }
+        } catch (imageError) {
+          addLog(`处理图片时出错: ${imageError.message}`, 'error');
+          // 出错时使用空数组，不中断整个流程
+          processedImages = [];
+        }
       }
+    } else {
+      addLog('页面没有图片需要处理');
     }
 
     // 构建Notion数据
+    addLog('构建 Notion 数据...');
     const notionData = {
       parent: { database_id: config.notionDbId },
       properties: {}
     };
 
-    // 根据数据库结构构建属性
-    for (const [key, prop] of Object.entries(schema)) {
-      switch (prop.type) {
+    // 映射字段
+    addLog('数据库字段映射:');
+    for (const [fieldName, fieldType] of Object.entries(schema)) {
+      addLog(`  ${fieldName}: ${fieldType}`);
+      
+      // 根据字段类型设置值
+      switch (fieldType) {
         case 'title':
-          notionData.properties[key] = {
-            title: [{ text: { content: (pageData.title || '无标题').slice(0, 30) } }]
+          notionData.properties[fieldName] = {
+            title: [{ text: { content: pageData.title } }]
+          };
+          break;
+        case 'rich_text':
+          notionData.properties[fieldName] = {
+            rich_text: [{ text: { content: processedContent.summary.substring(0, 2000) } }]
           };
           break;
         case 'url':
-          notionData.properties[key] = { url: pageData.url };
+          notionData.properties[fieldName] = {
+            url: pageData.url
+          };
           break;
-        case 'rich_text':
-          // 根据字段名称判断内容类型
-          if (key.includes('摘要') || key.includes('总结')) {
-            notionData.properties[key] = {
-              rich_text: [{ text: { content: processedContent.summary } }]
-            };
-          } else if (key.includes('亮点') || key.includes('要点')) {
-            notionData.properties[key] = {
-              rich_text: [{ text: { content: processedContent.outline } }]
-            };
-          } else if (key.includes('关键词')) {
-            notionData.properties[key] = {
-              rich_text: [{ text: { content: keywords } }]
-            };
-          }
-          break;
-        case 'date':
-          notionData.properties[key] = {
-            date: { start: new Date().toISOString() }
+        case 'multi_select':
+          // 处理关键词为多选标签
+          const keywordArray = keywords.split(',').map(k => k.trim()).filter(Boolean);
+          notionData.properties[fieldName] = {
+            multi_select: keywordArray.map(name => ({ name }))
           };
           break;
         case 'files':
-          if (cloudflareImageUrl) {
-            notionData.properties[key] = {
-              files: [{ name: 'cover', external: { url: cloudflareImageUrl } }]
-            };
+          // 处理封面图片 - 确保 URL 有效
+          if (cloudflareImageUrl && cloudflareImageUrl.startsWith('http')) {
+            try {
+              // 验证 URL 是否可访问
+              const testResponse = await fetch(cloudflareImageUrl, { method: 'HEAD' });
+              if (testResponse.ok) {
+                notionData.properties[fieldName] = {
+                  files: [
+                    {
+                      name: "封面图片",
+                      type: "external",
+                      external: {
+                        url: cloudflareImageUrl
+                      }
+                    }
+                  ]
+                };
+                addLog(`添加封面图片: ${cloudflareImageUrl}`);
+              } else {
+                addLog(`封面图片 URL 不可访问: ${cloudflareImageUrl}`, 'warning');
+                notionData.properties[fieldName] = { files: [] };
+              }
+            } catch (urlError) {
+              addLog(`验证封面图片 URL 时出错: ${urlError.message}`, 'warning');
+              notionData.properties[fieldName] = { files: [] };
+            }
+          } else {
+            addLog('没有有效的封面图片，使用空数组');
+            notionData.properties[fieldName] = { files: [] };
           }
           break;
+        default:
+          // 其他字段类型处理
+          addLog(`未处理的字段类型: ${fieldType} (${fieldName})`, 'warning');
       }
     }
 
-    // 添加调试日志
-    addLog('数据库字段映射:', {
-      title: Object.keys(schema).find(key => schema[key].type === 'title'),
-      summary: Object.keys(schema).find(key => schema[key].type === 'rich_text' && (key.includes('摘要') || key.includes('总结'))),
-      highlights: Object.keys(schema).find(key => schema[key].type === 'rich_text' && (key.includes('亮点') || key.includes('要点'))),
-      keywords: Object.keys(schema).find(key => schema[key].type === 'rich_text' && key.includes('关键词'))
-    });
-
-    // 保存到Notion
-    addLog('正在保存到Notion...');
-    addLog('保存数据:', notionData);
-    await saveToNotion(notionData, pageData, processedImages);
+    // 添加页面内容
+    addLog('添加页面内容...');
     
-    // 清理本地存储的关键词
-    try {
-      await chrome.storage.local.remove(['keywords']);
-      addLog('已清理本地存储的关键词');
-    } catch (error) {
-      addLog(`清理关键词失败: ${error.message}`, 'warning');
+    // 确保摘要内容存在
+    if (!processedContent.summary) {
+      addLog('警告: 摘要内容为空', 'warning');
+      processedContent.summary = pageData.content.substring(0, 1000) + '...';
     }
     
-    sendResponse({ success: true });
-    addLog('保存成功');
-    chrome.runtime.sendMessage({ action: 'taskCompleted' }).catch(() => {});
+    // 添加摘要段落
+    notionData.children = [
+      {
+        object: "block",
+        type: "paragraph",
+        paragraph: {
+          rich_text: [
+            {
+              type: "text",
+              text: {
+                content: processedContent.summary
+              }
+            }
+          ]
+        }
+      }
+    ];
+    
+    // 添加亮点列表
+    if (processedContent.outline) {
+      addLog('添加亮点列表...');
+      
+      // 添加亮点标题
+      notionData.children.push({
+        object: "block",
+        type: "heading_2",
+        heading_2: {
+          rich_text: [
+            {
+              type: "text",
+              text: {
+                content: "重要亮点"
+              }
+            }
+          ]
+        }
+      });
+      
+      // 添加亮点内容
+      const outlinePoints = processedContent.outline.split('\n')
+        .filter(line => line.trim())
+        .map(line => line.replace(/^\d+\.\s*/, '').trim());
+      
+      for (const point of outlinePoints) {
+        notionData.children.push({
+          object: "block",
+          type: "bulleted_list_item",
+          bulleted_list_item: {
+            rich_text: [
+              {
+                type: "text",
+                text: {
+                  content: point
+                }
+              }
+            ]
+          }
+        });
+      }
+    }
+    
+    // 添加原文链接
+    notionData.children.push({
+      object: "block",
+      type: "paragraph",
+      paragraph: {
+        rich_text: [
+          {
+            type: "text",
+            text: {
+              content: "原文链接: "
+            }
+          },
+          {
+            type: "text",
+            text: {
+              content: pageData.url
+            },
+            link: {
+              url: pageData.url
+            }
+          }
+        ]
+      }
+    });
+
+    // 添加图片块 - 使用更安全的方式
+    if (processedImages && processedImages.length > 0) {
+      addLog(`准备添加 ${processedImages.length} 张图片到 Notion 页面`);
+      
+      // 添加图片标题
+      notionData.children.push({
+        object: "block",
+        type: "heading_2",
+        heading_2: {
+          rich_text: [
+            {
+              type: "text",
+              text: {
+                content: "图片"
+              }
+            }
+          ]
+        }
+      });
+      
+      // 限制图片数量，避免请求过大
+      const maxImages = Math.min(processedImages.length, 10);
+      if (maxImages < processedImages.length) {
+        addLog(`限制图片数量为 ${maxImages} (原有 ${processedImages.length} 张)`, 'warning');
+      }
+      
+      for (let i = 0; i < maxImages; i++) {
+        const imageUrl = processedImages[i];
+        try {
+          // 验证 URL 是否可访问
+          const testResponse = await fetch(imageUrl, { method: 'HEAD' });
+          if (testResponse.ok) {
+            notionData.children.push({
+              object: "block",
+              type: "image",
+              image: {
+                type: "external",
+                external: {
+                  url: imageUrl
+                }
+              }
+            });
+            addLog(`添加图片块 #${i+1}: ${imageUrl}`);
+          } else {
+            addLog(`图片 URL 不可访问，跳过: ${imageUrl}`, 'warning');
+          }
+        } catch (urlError) {
+          addLog(`验证图片 URL 时出错，跳过: ${urlError.message}`, 'warning');
+        }
+      }
+    }
+
+    // 保存到Notion
+    addLog('发送数据到Notion...');
+    
+    // 添加请求详情日志
+    addLog('Notion 请求数据:', {
+      endpoint: `https://api.notion.com/v1/pages`,
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer [已隐藏]',
+        'Notion-Version': '2022-06-28',
+        'Content-Type': 'application/json'
+      },
+      body: {
+        parent: notionData.parent,
+        properties: Object.keys(notionData.properties),
+        children_count: notionData.children?.length || 0
+      }
+    });
+    
+    addLog('正在保存到Notion...');
+    
+    const notionResponse = await fetch('https://api.notion.com/v1/pages', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${config.notionToken}`,
+        'Notion-Version': '2022-06-28',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(notionData)
+    });
+
+    const notionResult = await notionResponse.json();
+    
+    if (!notionResponse.ok) {
+      addLog('Notion API 错误:', notionResult);
+      throw new Error(`Notion页面创建失败: ${notionResult.message || notionResponse.status}`);
+    }
+
+    addLog('Notion页面创建成功');
+    addLog('Notion响应:', notionResult);
+
+    // 返回结果
+    sendResponse({
+      success: true,
+      message: '内容已保存到Notion',
+      notionPageId: notionResult.id,
+      notionPageUrl: notionResult.url
+    });
   } catch (error) {
-    addLog(`保存失败: ${error.message}`, 'error');
-    sendResponse({ success: false, error: error.message });
+    addLog(`处理失败: ${error.message}`, 'error');
+    sendResponse({
+      success: false,
+      message: error.message
+    });
   }
 }
 
@@ -393,23 +693,23 @@ async function getPageContentFallback(tabId) {
       const content = contentElement.innerText
         .replace(/[\n]{3,}/g, '\n\n')
         .trim();
-      
-      return {
-        title: title.trim(),
+
+        return {
+          title: title.trim(),
         content: content.substring(0, 10000),
-        image: mainImage,
+          image: mainImage,
         images: images,
         url: url.split('?')[0],
         logs: ['使用备用方法提取内容']
-      };
-    }
-  });
-  
-  if (!results?.result) {
+        };
+      }
+    });
+
+    if (!results?.result) {
     addLog('备用方法也失败了', 'error');
-    throw new Error('无法提取页面内容');
-  }
-  
+      throw new Error('无法提取页面内容');
+    }
+
   return results.result;
 }
 
