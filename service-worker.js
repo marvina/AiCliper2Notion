@@ -30,96 +30,48 @@ chrome.storage.onChanged.addListener((changes) => {
 // 导入Cloudflare服务
 import cloudflareService from './cloudflare.js';
 
-// 处理图片上传
+// 处理单张图片上传
 async function uploadImageToCloudflare(imageUrl) {
   try {
-    addLog(`开始上传图片到 Cloudflare: ${imageUrl}`);
-    
-    // 检查 URL 是否有效
-    if (!imageUrl || typeof imageUrl !== 'string' || !imageUrl.startsWith('http')) {
-      addLog(`无效的图片 URL: ${imageUrl}`, 'warning');
-      return imageUrl;
-    }
-    
-    // 检查是否已经是 Cloudflare URL
-    if (imageUrl.includes('imagedelivery.net') || 
-        imageUrl.includes('r2.cloudflarestorage.com')) {
-      addLog(`图片已经在 Cloudflare 上，跳过上传: ${imageUrl}`);
-      return imageUrl;
-    }
-    
-    addLog(`正在获取图片数据: ${imageUrl}`);
-    
-    // 获取图片数据
-    const response = await fetch(imageUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-      }
-    });
-    
-    if (!response.ok) {
-      addLog(`获取图片失败: ${imageUrl} - HTTP ${response.status}`, 'error');
-      return imageUrl;
-    }
-    
-    const contentType = response.headers.get('content-type');
-    addLog(`图片类型: ${contentType}`);
-    
-    if (!contentType || !contentType.startsWith('image/')) {
-      addLog(`非图片内容: ${imageUrl} - ${contentType}`, 'warning');
-      return imageUrl;
-    }
-    
-    const blob = await response.blob();
-    addLog(`获取到图片数据: ${blob.size} 字节`);
-    
-    // 上传到 Cloudflare
-    addLog(`开始上传到 Cloudflare...`);
-    const cloudflareUrl = await cloudflareService.uploadImage(imageUrl, blob);
-    
-    if (!cloudflareUrl || cloudflareUrl === imageUrl) {
-      addLog(`上传到 Cloudflare 失败，使用原始 URL: ${imageUrl}`, 'warning');
-      return imageUrl;
-    }
-    
-    addLog(`上传成功: ${imageUrl} -> ${cloudflareUrl}`);
+    addLog(`开始上传图片: ${imageUrl}`);
+    const cloudflareUrl = await cloudflareService.uploadImage(imageUrl);
+    addLog(`图片上传成功: ${cloudflareUrl}`);
     return cloudflareUrl;
   } catch (error) {
-    addLog(`上传图片时出错: ${error.message}`, 'error');
-    return imageUrl; // 出错时返回原始URL
+    addLog(`图片上传失败: ${error.message}`, 'error');
+    throw error;
   }
 }
 
 // 处理所有图片上传
 async function processImages(images) {
-  const processedImages = [];
-  addLog(`开始处理 ${images.length} 张图片`);
-  
-  // 添加进度跟踪
-  let processed = 0;
-  const total = images.length;
-  
-  for (const imageUrl of images) {
-    try {
-      processed++;
-      addLog(`处理图片 [${processed}/${total}]: ${imageUrl}`);
-      
-      const cloudflareUrl = await uploadImageToCloudflare(imageUrl);
-      processedImages.push(cloudflareUrl);
-      
-      if (cloudflareUrl !== imageUrl) {
-        addLog(`图片处理成功: ${imageUrl} -> ${cloudflareUrl}`);
-      } else {
-        addLog(`图片保持原样: ${imageUrl}`, 'warning');
-      }
-    } catch (error) {
-      addLog(`处理图片失败: ${imageUrl} - ${error.message}`, 'warning');
-      processedImages.push(imageUrl); // 如果上传失败，使用原始URL
+  try {
+    if (!Array.isArray(images) || images.length === 0) {
+      addLog('没有图片需要处理');
+      return [];
     }
+
+    addLog(`开始处理 ${images.length} 张图片`);
+    
+    // 逐个上传图片
+    const uploadPromises = images.map(async (imageUrl) => {
+      try {
+        return await uploadImageToCloudflare(imageUrl);
+      } catch (error) {
+        addLog(`单张图片上传失败: ${error.message}`, 'warning');
+        return null;
+      }
+    });
+
+    const results = await Promise.all(uploadPromises);
+    const successfulUploads = results.filter(Boolean);
+    
+    addLog(`图片处理完成，成功上传 ${successfulUploads.length}/${images.length} 张`);
+    return successfulUploads;
+  } catch (error) {
+    addLog(`图片处理过程出错: ${error.message}`, 'error');
+    throw error;
   }
-  
-  addLog(`图片处理完成，共 ${processedImages.length} 张`);
-  return processedImages;
 }
 
 // 日志系统
@@ -193,11 +145,6 @@ async function handleSaveRequest(tabId, sendResponse) {
     // 获取页面内容
     const pageData = await getPageContent(tabId);
     addLog('页面内容获取结果', pageData);
-    addLog(`获取到的图片数量: ${pageData.images?.length || 0}`);
-    
-    if (pageData.images && pageData.images.length > 0) {
-      addLog(`图片列表: ${JSON.stringify(pageData.images.slice(0, 3))}...`);
-    }
     
     if (!pageData?.content) {
       throw new Error('无法提取页面内容');
@@ -221,345 +168,109 @@ async function handleSaveRequest(tabId, sendResponse) {
     const keywords = storedKeywords || processedContent.keywords;
     addLog('最终使用的关键词:', keywords);
     
-    // 处理图片上传 - 确保所有图片都上传到 Cloudflare
+    // 处理图片上传
     let cloudflareImageUrl = '';
     let processedImages = [];
-    
     if (pageData.images && pageData.images.length > 0) {
       addLog(`开始处理${pageData.images.length}张图片...`);
-      
-      // 确保所有图片都是有效的 URL
-      const validImages = pageData.images.filter(url => 
-        url && typeof url === 'string' && url.startsWith('http')
-      );
-      
-      if (validImages.length !== pageData.images.length) {
-        addLog(`过滤掉 ${pageData.images.length - validImages.length} 个无效图片 URL`, 'warning');
-      }
-      
-      if (validImages.length === 0) {
-        addLog('没有有效的图片可以处理', 'warning');
-      } else {
-        try {
-          // 处理所有有效图片
-          addLog(`开始上传 ${validImages.length} 张图片到 Cloudflare...`);
-          
-          // 逐个处理图片，确保每张图片都有机会上传
-          for (let i = 0; i < validImages.length; i++) {
-            const imageUrl = validImages[i];
-            try {
-              addLog(`处理图片 ${i+1}/${validImages.length}: ${imageUrl}`);
-              const cloudflareUrl = await uploadImageToCloudflare(imageUrl);
-              
-              if (cloudflareUrl && cloudflareUrl !== imageUrl) {
-                addLog(`图片上传成功: ${imageUrl} -> ${cloudflareUrl}`);
-                processedImages.push(cloudflareUrl);
-              } else {
-                addLog(`图片上传失败或未更改，使用原始 URL: ${imageUrl}`, 'warning');
-                processedImages.push(imageUrl);
-              }
-            } catch (imgError) {
-              addLog(`处理图片时出错: ${imgError.message}`, 'error');
-              // 出错时使用原始 URL
-              processedImages.push(imageUrl);
-            }
-          }
-          
-          // 验证处理后的图片 URL
-          processedImages = processedImages.filter(url => {
-            const isValid = url && typeof url === 'string' && url.startsWith('http');
-            if (!isValid) {
-              addLog(`过滤无效的处理后图片 URL: ${url}`, 'warning');
-            }
-            return isValid;
-          });
-          
-          // 使用第一张处理后的图片作为封面
-          if (processedImages.length > 0) {
-            cloudflareImageUrl = processedImages[0];
-            addLog(`设置封面图片: ${cloudflareImageUrl}`);
-          } else {
-            addLog('警告: 没有有效的图片可用作封面', 'warning');
-          }
-        } catch (imageError) {
-          addLog(`处理图片时出错: ${imageError.message}`, 'error');
-          // 出错时使用空数组，不中断整个流程
-          processedImages = [];
-        }
-      }
-    } else {
-      addLog('页面没有图片需要处理');
+      processedImages = await processImages(pageData.images);
+      // 使用第一张图片作为封面
+      cloudflareImageUrl = processedImages[0] || '';
+      addLog('图片处理完成');
+
+      // 替换内容中的图片URL
+      let markdownContent = pageData.contentMarkdown;
+      pageData.images.forEach((originalUrl, index) => {
+        markdownContent = markdownContent.replace(
+          new RegExp(originalUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'),
+          processedImages[index]
+        );
+      });
+      pageData.contentMarkdown = markdownContent;
+      addLog('已更新内容中的图片URL');
     }
 
     // 构建Notion数据
-    addLog('构建 Notion 数据...');
     const notionData = {
       parent: { database_id: config.notionDbId },
       properties: {}
     };
 
-    // 映射字段
-    addLog('数据库字段映射:');
-    for (const [fieldName, fieldType] of Object.entries(schema)) {
-      addLog(`  ${fieldName}: ${fieldType}`);
-      
-      // 根据字段类型设置值
-      switch (fieldType) {
+    // 根据数据库结构构建属性
+    for (const [key, prop] of Object.entries(schema)) {
+      switch (prop.type) {
         case 'title':
-          notionData.properties[fieldName] = {
-            title: [{ text: { content: pageData.title } }]
-          };
-          break;
-        case 'rich_text':
-          notionData.properties[fieldName] = {
-            rich_text: [{ text: { content: processedContent.summary.substring(0, 2000) } }]
+          notionData.properties[key] = {
+            title: [{ text: { content: (pageData.title || '无标题').slice(0, 30) } }]
           };
           break;
         case 'url':
-          notionData.properties[fieldName] = {
-            url: pageData.url
-          };
+          notionData.properties[key] = { url: pageData.url };
           break;
-        case 'multi_select':
-          // 处理关键词为多选标签
-          const keywordArray = keywords.split(',').map(k => k.trim()).filter(Boolean);
-          notionData.properties[fieldName] = {
-            multi_select: keywordArray.map(name => ({ name }))
+        case 'rich_text':
+          // 根据字段名称判断内容类型
+          if (key.includes('摘要') || key.includes('总结')) {
+            notionData.properties[key] = {
+              rich_text: [{ text: { content: processedContent.summary } }]
+            };
+          } else if (key.includes('亮点') || key.includes('要点')) {
+            notionData.properties[key] = {
+              rich_text: [{ text: { content: processedContent.outline } }]
+            };
+          } else if (key.includes('关键词')) {
+            notionData.properties[key] = {
+              rich_text: [{ text: { content: keywords } }]
+            };
+          }
+          break;
+        case 'date':
+          notionData.properties[key] = {
+            date: { start: new Date().toISOString() }
           };
           break;
         case 'files':
-          // 处理封面图片 - 确保 URL 有效
-          if (cloudflareImageUrl && cloudflareImageUrl.startsWith('http')) {
-            try {
-              // 验证 URL 是否可访问
-              const testResponse = await fetch(cloudflareImageUrl, { method: 'HEAD' });
-              if (testResponse.ok) {
-                notionData.properties[fieldName] = {
-                  files: [
-                    {
-                      name: "封面图片",
-                      type: "external",
-                      external: {
-                        url: cloudflareImageUrl
-                      }
-                    }
-                  ]
-                };
-                addLog(`添加封面图片: ${cloudflareImageUrl}`);
-              } else {
-                addLog(`封面图片 URL 不可访问: ${cloudflareImageUrl}`, 'warning');
-                notionData.properties[fieldName] = { files: [] };
-              }
-            } catch (urlError) {
-              addLog(`验证封面图片 URL 时出错: ${urlError.message}`, 'warning');
-              notionData.properties[fieldName] = { files: [] };
-            }
-          } else {
-            addLog('没有有效的封面图片，使用空数组');
-            notionData.properties[fieldName] = { files: [] };
+          if (cloudflareImageUrl) {
+            notionData.properties[key] = {
+              files: [{ name: 'cover', external: { url: cloudflareImageUrl } }]
+            };
           }
           break;
-        default:
-          // 其他字段类型处理
-          addLog(`未处理的字段类型: ${fieldType} (${fieldName})`, 'warning');
       }
     }
 
-    // 添加页面内容
-    addLog('添加页面内容...');
-    
-    // 确保摘要内容存在
-    if (!processedContent.summary) {
-      addLog('警告: 摘要内容为空', 'warning');
-      processedContent.summary = pageData.content.substring(0, 1000) + '...';
-    }
-    
-    // 添加摘要段落
-    notionData.children = [
-      {
-        object: "block",
-        type: "paragraph",
-        paragraph: {
-          rich_text: [
-            {
-              type: "text",
-              text: {
-                content: processedContent.summary
-              }
-            }
-          ]
-        }
-      }
-    ];
-    
-    // 添加亮点列表
-    if (processedContent.outline) {
-      addLog('添加亮点列表...');
-      
-      // 添加亮点标题
-      notionData.children.push({
-        object: "block",
-        type: "heading_2",
-        heading_2: {
-          rich_text: [
-            {
-              type: "text",
-              text: {
-                content: "重要亮点"
-              }
-            }
-          ]
-        }
-      });
-      
-      // 添加亮点内容
-      const outlinePoints = processedContent.outline.split('\n')
-        .filter(line => line.trim())
-        .map(line => line.replace(/^\d+\.\s*/, '').trim());
-      
-      for (const point of outlinePoints) {
-        notionData.children.push({
-          object: "block",
-          type: "bulleted_list_item",
-          bulleted_list_item: {
-            rich_text: [
-              {
-                type: "text",
-                text: {
-                  content: point
-                }
-              }
-            ]
-          }
-        });
-      }
-    }
-    
-    // 添加原文链接
-    notionData.children.push({
-      object: "block",
-      type: "paragraph",
-      paragraph: {
-        rich_text: [
-          {
-            type: "text",
-            text: {
-              content: "原文链接: "
-            }
-          },
-          {
-            type: "text",
-            text: {
-              content: pageData.url
-            },
-            link: {
-              url: pageData.url
-            }
-          }
-        ]
-      }
-    });
 
-    // 添加图片块 - 使用更安全的方式
-    if (processedImages && processedImages.length > 0) {
-      addLog(`准备添加 ${processedImages.length} 张图片到 Notion 页面`);
-      
-      // 添加图片标题
-      notionData.children.push({
-        object: "block",
-        type: "heading_2",
-        heading_2: {
-          rich_text: [
-            {
-              type: "text",
-              text: {
-                content: "图片"
-              }
-            }
-          ]
-        }
-      });
-      
-      // 限制图片数量，避免请求过大
-      const maxImages = Math.min(processedImages.length, 10);
-      if (maxImages < processedImages.length) {
-        addLog(`限制图片数量为 ${maxImages} (原有 ${processedImages.length} 张)`, 'warning');
-      }
-      
-      for (let i = 0; i < maxImages; i++) {
-        const imageUrl = processedImages[i];
-        try {
-          // 验证 URL 是否可访问
-          const testResponse = await fetch(imageUrl, { method: 'HEAD' });
-          if (testResponse.ok) {
-            notionData.children.push({
-              object: "block",
-              type: "image",
-              image: {
-                type: "external",
-                external: {
-                  url: imageUrl
-                }
-              }
-            });
-            addLog(`添加图片块 #${i+1}: ${imageUrl}`);
-          } else {
-            addLog(`图片 URL 不可访问，跳过: ${imageUrl}`, 'warning');
-          }
-        } catch (urlError) {
-          addLog(`验证图片 URL 时出错，跳过: ${urlError.message}`, 'warning');
-        }
-      }
-    }
 
-    // 保存到Notion
-    addLog('发送数据到Notion...');
     
-    // 添加请求详情日志
-    addLog('Notion 请求数据:', {
-      endpoint: `https://api.notion.com/v1/pages`,
-      method: 'POST',
-      headers: {
-        'Authorization': 'Bearer [已隐藏]',
-        'Notion-Version': '2022-06-28',
-        'Content-Type': 'application/json'
-      },
-      body: {
-        parent: notionData.parent,
-        properties: Object.keys(notionData.properties),
-        children_count: notionData.children?.length || 0
-      }
-    });
-    
-    addLog('正在保存到Notion...');
-    
-    const notionResponse = await fetch('https://api.notion.com/v1/pages', {
+    // 保存到 Notion
+    addLog('正在保存到 Notion...');
+    const response = await fetch('https://api.notion.com/v1/pages', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${config.notionToken}`,
-        'Notion-Version': '2022-06-28',
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'Notion-Version': '2022-06-28'
       },
       body: JSON.stringify(notionData)
     });
 
-    const notionResult = await notionResponse.json();
+    const result = await response.json();
     
-    if (!notionResponse.ok) {
-      addLog('Notion API 错误:', notionResult);
-      throw new Error(`Notion页面创建失败: ${notionResult.message || notionResponse.status}`);
+    if (!response.ok) {
+      throw new Error(`Notion页面创建失败: ${result.message || response.status}`);
     }
 
-    addLog('Notion页面创建成功');
-    addLog('Notion响应:', notionResult);
+    addLog('内容成功保存到 Notion');
+    
+    // 清理本地存储
+    await chrome.storage.local.remove(['keywords']);
+    addLog('已清理本地存储的关键词');
 
-    // 返回结果
     sendResponse({
       success: true,
-      message: '内容已保存到Notion',
-      notionPageId: notionResult.id,
-      notionPageUrl: notionResult.url
+      message: '保存成功' + (cloudflareImageUrl ? '' : ' (仅文本内容)'),
+      notionPageId: result.id
     });
+
   } catch (error) {
     addLog(`处理失败: ${error.message}`, 'error');
     sendResponse({
@@ -713,19 +424,22 @@ async function getPageContentFallback(tabId) {
   return results.result;
 }
 
+// AI 内容处理函数
 async function processContent(content) {
   try {
+    console.log('[AI处理] 开始内容摘要处理');
     addLog(`使用 ${config.aiProvider} API`);
     
     // 清理内容中的代码块
     const cleanContent = content.replace(/```[\s\S]*?```/g, '')
                                .replace(/`[^`]*`/g, '');
 
-      const requestBody = {
-        model: config.aiModel,
-        messages: [{
-          role: "user",
-          content: `请通过三方面分析并总结这篇文章：
+    // 构建 API 请求数据
+    const requestBody = {
+      model: config.aiModel,
+      messages: [{
+        role: "user",
+        content: `请通过三方面分析并总结这篇文章：
 
 1. 全文总结：
 请用一段话概括文章的主要内容。
@@ -754,15 +468,16 @@ async function processContent(content) {
 
 原文：
 ${cleanContent.substring(0, 3000)}`
-        }],
-        stream: false,
-        max_tokens: 2000,
-        temperature: 0.7,
-        top_p: 0.9
-      };
-
-    addLog('发送到 API 的请求:', requestBody);
-
+      }],
+      stream: false,
+      max_tokens: 2000,
+      temperature: 0.7,
+      top_p: 0.9
+    };
+    
+    console.log('[AI处理] 发送请求到 API:', requestBody);
+    
+    // 发送请求到 OpenAI API
     const response = await fetch(config.aiApiEndpoint + '/chat/completions', {
       method: 'POST',
       headers: {
@@ -773,135 +488,73 @@ ${cleanContent.substring(0, 3000)}`
     });
 
     const responseText = await response.text();
-    addLog('API 原始响应:', responseText);
+    console.log('[AI处理] API 原始响应:', responseText);
 
     if (!response.ok) {
-      try {
-        const err = JSON.parse(responseText);
-        addLog(`API响应状态: ${response.status}`);
-        addLog(`API错误详情:`, err);
-        throw new Error(`API错误: ${err?.message || response.status}`);
-      } catch (parseError) {
-        throw new Error(`API错误: ${response.status} - ${responseText}`);
-      }
+      throw new Error(`API 请求失败: ${response.status}`);
     }
 
-    let data;
-    try {
-      data = JSON.parse(responseText);
-    } catch (parseError) {
-      addLog('API 响应解析失败:', parseError);
-      throw new Error('API 响应格式错误');
-    }
-
+    const data = JSON.parse(responseText);
     const resultText = data.choices?.[0]?.message?.content;
+    
     if (!resultText) {
-      addLog('API 响应缺少内容');
       throw new Error('API 响应缺少内容');
     }
 
-    addLog('API 返回的内容:', resultText);
-
-    try {
-      // 提取总结部分
-      const summaryMatch = resultText.match(/###\s*全文总结\s*([\s\S]*?)(?=\n###\s*(重要亮点|关键词)|$)/);
-      let summary = summaryMatch ? summaryMatch[1].trim() : '无法提取总结';
-
-      // 提取亮点部分
-      const outlineMatch = resultText.match(/###\s*重要亮点\s*([\s\S]*?)(?=\n###\s*(关键词|$))/);
-      let outline = outlineMatch ? outlineMatch[1].trim() : '';
-
-      // 提取关键词部分
-      const keywordsMatch = resultText.match(/###\s*关键词\s*([\s\S]*?)(?=\n###\s*|$)/);
-      let keywords = keywordsMatch ? keywordsMatch[1].trim() : '';
-
-      // 清理总结中可能包含的亮点部分和标题
-      summary = summary
-        .split(/(?:\n|^)(?:###\s*)?重要亮点[：:]/)[0] // 移除"重要亮点"及其内容
-        .split(/\n\d+\./)[0] // 移除编号列表
-        .replace(/^###\s*/, '') // 移除开头的 ###
-        .replace(/[：:]\s*$/, '') // 移除末尾的冒号
-        .trim();
-
-      // 格式化亮点
-      if (outline) {
-        // 提取亮点列表
-        const points = outline.match(/(?:^|\n)[-•\d\.\s]*([^-•\n]+)/g) || [];
-        outline = points
-          .map((point, index) => {
-            const cleanPoint = point
-              .replace(/^[-•\d\.\s]+/, '') // 移除前缀符号
-              .replace(/^###\s*/, '') // 移除 markdown 标记
-              .trim();
-            return `${index + 1}. ${cleanPoint}`;
-          })
-          .filter(point => point.length > 4) // 过滤掉太短的点
-          .join('\n');
-      }
-
-      // 如果还是没有亮点，尝试从剩余文本中提取
-      if (!outline) {
-        const remainingText = resultText.replace(summaryMatch[0], '').trim();
-        const points = remainingText.match(/(?:^|\n)[-•\d\.\s]*([^-•\n]+)/g) || [];
-        outline = points
-          .map((point, index) => {
-            const cleanPoint = point
-              .replace(/^[-•\d\.\s]+/, '') // 移除前缀符号
-              .replace(/^###\s*/, '') // 移除 markdown 标记
-              .trim();
-            return `${index + 1}. ${cleanPoint}`;
-          })
-          .filter(point => 
-            point.length > 4 && 
-            !point.includes('全文总结') && 
-            !point.includes('重要亮点')
-          )
-          .join('\n');
-      }
-
-      // 格式化关键词
-      if (keywords) {
-        // 提取关键词列表
-        const points = keywords.match(/(?:^|\n)[-•\d\.\s]*([^-•\n]+)/g) || [];
-        keywords = points
-          .map((point, index) => {
-            const cleanPoint = point
-              .replace(/^[-•\d\.\s]+/, '') // 移除前缀符号
-              .replace(/^###\s*/, '') // 移除 markdown 标记
-              .trim();
-            return cleanPoint;
-          })
-          .filter(point => point.length > 0) // 过滤掉空字符串
-          .join(', ');
-      }
-
-      // 添加调试日志
-      addLog('提取的关键词:', keywords);
-
-      // 存储关键词到Chrome存储
-      try {
-        await chrome.storage.local.set({ keywords: keywords });
-        addLog('关键词已成功存储到本地存储:', keywords);
-      } catch (error) {
-        addLog(`存储关键词失败: ${error.message}`, 'error');
-        throw error;
-      }
-
-      return {
-        summary,
-        outline: outline || '无法提取重要亮点',
-        keywords: keywords || '无法提取关键词'
-      };
-    } catch (parseError) {
-      addLog('内容处理失败:', parseError);
-      return {
-        summary: resultText.substring(0, 1000),
-        outline: '无法提取重要亮点，请检查原文格式',
-        keywords: '无法提取关键词，请检查原文格式'
-      };
+    // 发送消息到当前活动标签页，显示 AI 返回的内容
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tabs[0]) {
+      chrome.tabs.sendMessage(tabs[0].id, {
+        action: 'showAIResult',
+        data: resultText
+      });
     }
+
+    console.log('[AI处理] API 返回的内容:', resultText);
+
+    // 提取内容
+    const summaryMatch = resultText.match(/###\s*全文总结\s*([\s\S]*?)(?=\n###\s*(重要亮点|关键词)|$)/);
+    const outlineMatch = resultText.match(/###\s*重要亮点\s*([\s\S]*?)(?=\n###\s*(关键词|$))/);
+    const keywordsMatch = resultText.match(/###\s*关键词\s*([\s\S]*?)(?=\n###\s*|$)/);
+
+    // 处理提取的内容
+    const summary = summaryMatch ? summaryMatch[1].trim() : '';
+    const outline = outlineMatch ? outlineMatch[1].trim()
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line && !line.startsWith('###'))
+      .join('\n') : '';
+    const keywords = keywordsMatch ? keywordsMatch[1].trim()
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line && !line.startsWith('###'))
+      .join(', ') : '';
+
+    console.log('[AI处理] 提取的内容:', {
+      summary,
+      outline,
+      keywords
+    });
+
+    // 存储关键词到本地存储
+    if (keywords) {
+      await chrome.storage.local.set({ keywords });
+      console.log('[AI处理] 关键词已保存到本地存储:', keywords);
+    }
+
+    const processedResult = {
+      summary: summary || '无法提取总结',
+      outline: outline || '无法提取亮点',
+      keywords: keywords || '无法提取关键词',
+      created_at: new Date().toISOString()
+    };
+
+    console.log('[AI处理] 最终处理结果:', processedResult);
+    return processedResult;
+
   } catch (error) {
-    addLog(`内容处理失败: ${error.message}`, 'error');
+    console.error('[AI处理] 处理失败:', error);
+    addLog(`AI 处理失败: ${error.message}`, 'error');
     throw error;
   }
 }

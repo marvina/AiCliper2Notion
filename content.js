@@ -168,7 +168,7 @@ async function extractContent() {
     
     log(`处理页面: ${title} (${url})`);
     
-    let mainImage = '';
+    let mainImage;
     let allImages = [];
     let tempImages = [];
     
@@ -295,14 +295,20 @@ async function extractContent() {
         console.log('[同步日志] 处理图片:', imgUrl); // 同步日志
         log(`检查图片 #${i+1}/${tempImages.length} 尺寸: ${imgUrl}`);
         
-        const result = await checkImageSize(imgUrl);
-        
-        if (result) {
-          log(`✅ [${++passedCount}] 图片通过尺寸检查: ${imgUrl}`);
-          allImages.push(imgUrl);
-        } else {
-          log(`❌ [${++failedCount}] 图片未通过尺寸检查: ${imgUrl}`);
+let imageUrl; // 确保变量声明在使用前
+try {
+  imageUrl = imgUrl; // 明确初始化
+  const result = await checkImageSize(imageUrl);
+
+  if (result) {
+    log(`✅ [${++passedCount}] 图片通过尺寸检查: ${imageUrl}`);
+    allImages.push(imageUrl);
+  } else {
+    log(`❌ [${++failedCount}] 图片未通过尺寸检查: ${imageUrl}`);
         }
+      } catch (error) {
+  log(`图片处理失败: ${imageUrl} (${error.message})`);
+}
       }
       
       log(`尺寸筛选完成: 通过 ${passedCount}张，失败 ${failedCount}张`);
@@ -315,10 +321,11 @@ async function extractContent() {
     allImages = [...new Set(allImages)];
     log(`最终去重: ${beforeFinalDedup} -> ${allImages.length} 张图片`);
     
-    // 设置主图片
+    // 更新主图片（此时仅记录候选图片）
     if (allImages.length > 0) {
-      mainImage = allImages[0];
-      log(`设置主图片: ${mainImage}`);
+      // 不立即设置主图片，而是标记待上传状态
+      log(`候选主图片: ${allImages[0]}`);
+      mainImage = ''; // 使用已声明的变量，不重新声明
     }
 
     // 按优先级查找内容区域
@@ -336,21 +343,42 @@ async function extractContent() {
     }
 
     if (!mainContent) {
-      log('未找到特定内容区域，使用 body');
+      log('未找到特定内容区域，尝试使用 Readability');
+      try {
+        const documentClone = document.cloneNode(true);
+        const reader = new Readability(documentClone);
+        const article = reader.parse();
+        
+        if (article) {
+          log('Readability 解析成功');
+          mainContent = document.createElement('div');
+          mainContent.innerHTML = article.content;
+        } else {
+          log('Readability 解析失败，使用 body');
+          mainContent = document.body;
+        }
+      } catch (error) {
+        log(`Readability 处理出错: ${error.message}，使用 body`);
       mainContent = document.body;
+      }
     }
 
     // 清理和格式化内容
     const content = mainContent.innerText
       .replace(/[\n]{3,}/g, '\n\n')
+      .replace(/https?:\/\/[^\s]+/g, '') // 移除所有URL
+      .replace(/\[链接已移除:[^\]]+\]/g, '') // 移除之前的链接标记
       .trim();
 
-    // 创建简单的 Markdown 内容
+    // 修改 Markdown 内容处理逻辑
     const contentMarkdown = content
       .split('\n')
       .map(line => line.trim())
       .filter(Boolean)
       .map(line => {
+        // 移除所有URL
+        line = line.replace(/https?:\/\/[^\s]+/g, '');
+        
         // 简单的标题检测
         if (/^[#]{1,6}\s/.test(line)) {
           return line;
@@ -374,8 +402,9 @@ async function extractContent() {
       contentMarkdown: contentMarkdown.substring(0, 10000),
       image: mainImage,
       images: allImages,
+      pendingMainImage: allImages.length > 0 ? allImages[0] : '', // 添加候选主图片字段
       url: url.split('?')[0],
-      imageFilterLog: logSummary // 使用完整的日志记录
+      imageFilterLog: logSummary
     };
 
   } catch (error) {
@@ -395,13 +424,6 @@ async function extractContent() {
 // 修改消息监听器
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   console.log('[内容脚本] 收到消息:', request.action);
-  
-  // 添加 ping 响应
-  if (request.action === 'ping') {
-    console.log('[内容脚本] 收到 ping 请求，响应 pong');
-    sendResponse({ status: 'pong' });
-    return true;
-  }
   
   if (request.action === 'getPageContent') {
     const detailedLogs = [];
@@ -423,20 +445,38 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             if (!content) {
               throw new Error('内容提取失败：返回值为空');
             }
-            addLog(`内容提取完成，图片数量: ${content.images?.length || 0}`);
+            
+            // 确保图片数组存在且有效
+            if (!content.images || !Array.isArray(content.images)) {
+              content.images = [];
+              addLog('警告: 图片数组无效，已重置为空数组');
+            }
+            
+            addLog(`内容提取完成，筛选后图片数量: ${content.images.length || 0}`);
+            
+            // 添加标志表明这些图片已经过筛选
+            content.imagesFiltered = true;
             content.logs = detailedLogs;
+            
+            // 添加文本内容可用标志
+            content.hasTextContent = content.content && content.content.length > 0;
+            
             console.log('[内容脚本] 准备发送响应');
       sendResponse(content);
             console.log('[内容脚本] 响应发送成功');
           })
           .catch(error => {
             addLog(`处理消息时出错: ${error.message}`);
+            // 即使出错，也返回页面标题和文本内容
             sendResponse({ 
               error: error.message,
               logs: detailedLogs,
               title: document.title || '',
-              content: '内容提取失败',
+              content: document.body.innerText.substring(0, 10000) || '内容提取失败',
+              contentMarkdown: '',
               images: [],
+              imagesFiltered: true, // 标记图片已筛选（虽然为空）
+              hasTextContent: true, // 标记有文本内容
               url: window.location.href
             });
           });
@@ -455,17 +495,24 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       }
     } catch (error) {
       addLog(`处理请求时发生错误: ${error.message}`);
+      // 即使出错，也尝试返回基本文本内容
       sendResponse({ 
         error: error.message,
         logs: detailedLogs,
         title: document.title || '',
-        content: '内容提取失败',
+        content: document.body.innerText.substring(0, 10000) || '内容提取失败',
         images: [],
+        imagesFiltered: true,
+        hasTextContent: true,
         url: window.location.href
       });
     }
     
     return true; // 表示会异步发送响应
+  } else if (request.action === 'showAIResult') {
+    console.log('=== AI 返回的内容 ===');
+    console.log(request.data);
+    console.log('==================');
   }
   return true;
 });
