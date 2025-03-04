@@ -129,6 +129,11 @@ async function handleSaveRequest(tabId, sendResponse) {
     // 获取页面内容
     const pageData = await getPageContent(tabId);
     addLog('页面内容获取结果', pageData);
+    addLog(`获取到的图片数量: ${pageData.images?.length || 0}`);
+    
+    if (pageData.images && pageData.images.length > 0) {
+      addLog(`图片列表: ${JSON.stringify(pageData.images.slice(0, 3))}...`);
+    }
     
     if (!pageData?.content) {
       throw new Error('无法提取页面内容');
@@ -161,17 +166,29 @@ async function handleSaveRequest(tabId, sendResponse) {
       // 使用第一张图片作为封面
       cloudflareImageUrl = processedImages[0] || '';
       addLog('图片处理完成');
+      addLog(`处理后的图片: ${JSON.stringify(processedImages.slice(0, 3))}...`);
 
       // 替换内容中的图片URL
-      let markdownContent = pageData.contentMarkdown;
-      pageData.images.forEach((originalUrl, index) => {
-        markdownContent = markdownContent.replace(
-          new RegExp(originalUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'),
-          processedImages[index]
-        );
-      });
-      pageData.contentMarkdown = markdownContent;
-      addLog('已更新内容中的图片URL');
+      if (pageData.contentMarkdown) {
+        let markdownContent = pageData.contentMarkdown;
+        pageData.images.forEach((originalUrl, index) => {
+          if (originalUrl && processedImages[index]) {
+            try {
+              const escapedUrl = originalUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              markdownContent = markdownContent.replace(
+                new RegExp(escapedUrl, 'g'),
+                processedImages[index]
+              );
+            } catch (replaceError) {
+              addLog(`替换图片URL时出错: ${replaceError.message}`, 'warning');
+            }
+          }
+        });
+        pageData.contentMarkdown = markdownContent;
+        addLog('已更新内容中的图片URL');
+      } else {
+        addLog('警告: 没有 Markdown 内容可以更新图片 URL', 'warning');
+      }
     }
 
     // 构建Notion数据
@@ -255,217 +272,145 @@ async function handleSaveRequest(tabId, sendResponse) {
 async function getPageContent(tabId) {
   try {
     addLog('开始获取页面内容');
-    const [results] = await chrome.scripting.executeScript({
-      target: { tabId },
-      function: () => {
-        const title = document.title;
-        const url = window.location.href;
-        
-        // 优先选择的CSS选择器列表
-        const contentSelectors = [
-          'article',
-          '[itemprop="articleBody"]',
-          '.post-content',
-          '.article-content',
-          '.content',
-          '.main-content',
-          '#content',
-          '#article',
-          '.entry-content',
-          'main'
-        ];
-
-        // 查找主图片
-        const mainImage = document.querySelector('meta[property="og:image"]')?.content ||
-                         document.querySelector('meta[name="twitter:image"]')?.content ||
-                         document.querySelector('article img')?.src || '';
-
-        // 按优先级查找内容区域
-        let contentElement = null;
-        let contentText = '';
-        let contentHtml = '';
-        let images = [];
-
-        // 检查是否为小红书网站
-        if (window.location.hostname.includes('xiaohongshu.com')) {
-          const noteContent = document.querySelector('.note-content');
-          if (noteContent) {
-            contentElement = noteContent;
-            contentText = noteContent.innerText.trim();
-            contentHtml = noteContent.innerHTML;
-            const imgElements = noteContent.querySelectorAll('img');
-            imgElements.forEach(img => {
-              images.push(img.src);
-            });
-          }
-        } else {
-          // 首先尝试使用选择器
-          for (const selector of contentSelectors) {
-            const element = document.querySelector(selector);
-            if (element) {
-              contentElement = element;
-              contentText = element.innerText.trim();
-              contentHtml = element.innerHTML;
-              const imgElements = element.querySelectorAll('img');
-              imgElements.forEach(img => {
-                images.push(img.src);
-              });
-              break;
-            }
-          }
-        }
-
-        // 如果没有找到内容，使用 body
-        if (!contentElement) {
-          contentElement = document.body;
-          contentText = document.body.innerText.trim();
-          contentHtml = document.body.innerHTML;
-        }
-
-        // 清理和格式化内容
-        contentText = contentText.replace(/[\n]{3,}/g, '\n\n').trim();
-        
-        // 将HTML转换为Markdown
-        function htmlToMarkdown(element) {
-          if (!element) return '';
-          
-          // 创建一个文档片段来处理内容
-          const clone = element.cloneNode(true);
-          
-          // 处理标题
-          const headings = clone.querySelectorAll('h1, h2, h3, h4, h5, h6');
-          headings.forEach(heading => {
-            const level = parseInt(heading.tagName[1]);
-            const hashes = '#'.repeat(level);
-            heading.outerHTML = `\n${hashes} ${heading.textContent.trim()}\n`;
-          });
-          
-          // 处理段落
-          const paragraphs = clone.querySelectorAll('p');
-          paragraphs.forEach(p => {
-            p.outerHTML = `\n${p.textContent.trim()}\n`;
-          });
-          
-          // 处理列表
-          const listItems = clone.querySelectorAll('li');
-          listItems.forEach(item => {
-            const parent = item.parentElement;
-            const prefix = parent.tagName === 'OL' ? '1. ' : '- ';
-            item.outerHTML = `${prefix}${item.textContent.trim()}\n`;
-          });
-          
-          // 处理链接
-          const links = clone.querySelectorAll('a');
-          links.forEach(link => {
-            const text = link.textContent.trim();
-            const href = link.getAttribute('href');
-            if (href) {
-              link.outerHTML = `[${text}](${href})`;
-            }
-          });
-          
-          // 处理图片
-          const images = clone.querySelectorAll('img');
-          images.forEach(img => {
-            const alt = img.getAttribute('alt') || '';
-            const src = img.getAttribute('src');
-            if (src) {
-              img.outerHTML = `![${alt}](${src})`;
-            }
-          });
-          
-          // 处理粗体文本
-          const boldTexts = clone.querySelectorAll('strong, b');
-          boldTexts.forEach(bold => {
-            bold.outerHTML = `**${bold.textContent.trim()}**`;
-          });
-          
-          // 处理斜体文本
-          const italicTexts = clone.querySelectorAll('em, i');
-          italicTexts.forEach(italic => {
-            italic.outerHTML = `*${italic.textContent.trim()}*`;
-          });
-          
-          // 处理代码块
-          const codeBlocks = clone.querySelectorAll('pre');
-          codeBlocks.forEach(block => {
-            const code = block.textContent.trim();
-            block.outerHTML = `\n\`\`\`\n${code}\n\`\`\`\n`;
-          });
-          
-          // 处理行内代码
-          const inlineCodes = clone.querySelectorAll('code');
-          inlineCodes.forEach(code => {
-            if (!code.closest('pre')) { // 避免重复处理pre>code
-              code.outerHTML = `\`${code.textContent.trim()}\``;
-            }
-          });
-          
-          // 处理引用
-          const blockquotes = clone.querySelectorAll('blockquote');
-          blockquotes.forEach(quote => {
-            const lines = quote.textContent.trim().split('\n');
-            const quotedLines = lines.map(line => `> ${line}`).join('\n');
-            quote.outerHTML = `\n${quotedLines}\n`;
-          });
-          
-          // 处理水平线
-          const hrs = clone.querySelectorAll('hr');
-          hrs.forEach(hr => {
-            hr.outerHTML = '\n---\n';
-          });
-          
-          // 获取处理后的文本内容
-          let markdown = clone.textContent || clone.innerText || '';
-          
-          // 清理多余的空行
-          markdown = markdown.replace(/\n{3,}/g, '\n\n').trim();
-          
-          return markdown;
-        }
-        
-        // 将HTML字符串转换为Markdown
-        function convertHtmlStringToMarkdown(html) {
-          if (!html) return '';
-          
-          // 创建一个临时的div元素
-          const tempDiv = document.createElement('div');
-          tempDiv.innerHTML = html;
-          
-          return htmlToMarkdown(tempDiv);
-        }
-        
-        // 生成Markdown内容
-        const contentMarkdown = htmlToMarkdown(contentElement);
-
-        return {
-          title: title.trim(),
-          content: contentText.substring(0, 10000), // 保留原始文本内容
-          contentMarkdown: contentMarkdown.substring(0, 10000), // 添加Markdown格式内容
-          image: mainImage,
-          url: url.split('?')[0], // 去除URL参数
-          images: images // 返回所有图片
-        };
-      }
-    });
-
-    if (!results?.result) {
-      addLog('执行脚本失败', 'error');
-      throw new Error('执行内容脚本失败');
+    
+    // 检查内容脚本是否已加载
+    let contentScriptLoaded = false;
+    try {
+      // 尝试发送一个简单的 ping 消息来检查内容脚本是否已加载
+      await chrome.tabs.sendMessage(tabId, { action: 'ping' });
+      contentScriptLoaded = true;
+      addLog('内容脚本已加载');
+    } catch (error) {
+      addLog('内容脚本未加载，尝试注入...', 'warning');
+      contentScriptLoaded = false;
     }
-
-    const { result } = results;
-    if (!result.content) {
+    
+    // 如果内容脚本未加载，手动注入
+    if (!contentScriptLoaded) {
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId },
+          files: ['content.js']
+        });
+        addLog('内容脚本注入成功');
+        
+        // 等待内容脚本初始化
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      } catch (injectError) {
+        addLog(`内容脚本注入失败: ${injectError.message}`, 'error');
+        throw new Error('无法注入内容脚本');
+      }
+    }
+    
+    // 发送获取内容的消息
+    addLog('向内容脚本发送获取内容请求');
+    let response;
+    try {
+      response = await chrome.tabs.sendMessage(tabId, {
+        action: 'getPageContent',
+        includeDetailedLogs: true
+      });
+    } catch (messageError) {
+      addLog(`消息发送失败: ${messageError.message}，尝试备用方法`, 'warning');
+      return await getPageContentFallback(tabId);
+    }
+    
+    if (!response) {
+      addLog('未收到内容脚本响应', 'error');
+      throw new Error('内容脚本未响应');
+    }
+    
+    if (response.error) {
+      addLog(`内容脚本报告错误: ${response.error}`, 'error');
+      throw new Error(response.error);
+    }
+    
+    if (!response.content) {
       addLog('未能获取到页面内容', 'error');
       throw new Error('无法提取页面内容');
     }
-
+    
+    // 显示图片筛选日志
+    if (response.logs && response.logs.length > 0) {
+      addLog('图片筛选过程日志:');
+      response.logs.forEach((logEntry, index) => {
+        // 只显示前20条和最后5条，避免日志过长
+        if (index < 20 || index > response.logs.length - 6) {
+          addLog(`  ${logEntry}`);
+        } else if (index === 20) {
+          addLog(`  ... (省略 ${response.logs.length - 25} 条) ...`);
+        }
+      });
+    } else {
+      addLog('警告: 未收到图片筛选日志', 'warning');
+    }
+    
     addLog('成功获取页面内容');
-    return result;
+    addLog(`获取到的图片数量: ${response.images?.length || 0}`);
+    
+    if (response.images && response.images.length > 0) {
+      addLog(`图片列表: ${JSON.stringify(response.images.slice(0, 3))}...`);
+    }
+    
+    return response;
   } catch (error) {
-    addLog(`内容提取失败: ${error.message}`, 'error');
-    throw error;
+    addLog(`内容提取失败: ${error.message}，尝试备用方法`, 'error');
+    try {
+      return await getPageContentFallback(tabId);
+    } catch (fallbackError) {
+      addLog(`备用方法也失败了: ${fallbackError.message}`, 'error');
+      throw error; // 抛出原始错误
+    }
   }
+}
+
+// 添加一个备用的内容提取函数
+async function getPageContentFallback(tabId) {
+  addLog('使用备用方法提取内容');
+  
+  const [results] = await chrome.scripting.executeScript({
+    target: { tabId },
+    function: () => {
+      // 内联的内容提取逻辑
+      const title = document.title;
+      const url = window.location.href;
+      
+      // 查找主图片
+      const mainImage = document.querySelector('meta[property="og:image"]')?.content ||
+                       document.querySelector('meta[name="twitter:image"]')?.content ||
+                       document.querySelector('article img')?.src || '';
+      
+      // 收集所有图片
+      const images = Array.from(document.querySelectorAll('img'))
+        .map(img => img.src)
+        .filter(src => src && src.startsWith('http'));
+      
+      // 获取内容
+      const contentElement = document.querySelector('article') || 
+                            document.querySelector('.content') || 
+                            document.body;
+      
+      const content = contentElement.innerText
+        .replace(/[\n]{3,}/g, '\n\n')
+        .trim();
+      
+      return {
+        title: title.trim(),
+        content: content.substring(0, 10000),
+        image: mainImage,
+        images: images,
+        url: url.split('?')[0],
+        logs: ['使用备用方法提取内容']
+      };
+    }
+  });
+  
+  if (!results?.result) {
+    addLog('备用方法也失败了', 'error');
+    throw new Error('无法提取页面内容');
+  }
+  
+  return results.result;
 }
 
 async function processContent(content) {
