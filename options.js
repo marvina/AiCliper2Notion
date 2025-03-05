@@ -1,17 +1,17 @@
 document.addEventListener('DOMContentLoaded', () => {
-// 动态加载配置文件（如果需要）
-let apiConfig = {};
-(async () => {
-  try {
-    apiConfig = await import('./config.js');
-    console.log('配置文件加载成功:', apiConfig);
-  } catch (error) {
-    console.error('配置文件加载失败:', error);
-  }
-})();
+  // 动态加载配置文件（如果需要）
+  let apiConfig = {};
+  (async () => {
+    try {
+      apiConfig = await import('./config.js');
+      console.log('配置文件加载成功:', apiConfig);
+    } catch (error) {
+      console.error('配置文件加载失败:', error);
+    }
+  })();
 
-// AI 相关元素
-const aiProvider = document.getElementById('aiProvider');
+  // AI 相关元素
+  const aiProvider = document.getElementById('aiProvider');
   const aiApiKey = document.getElementById('aiApiKey');
   const aiApiEndpoint = document.getElementById('aiApiEndpoint');
   const aiModel = document.getElementById('aiModel');
@@ -35,7 +35,8 @@ const aiProvider = document.getElementById('aiProvider');
     bucketName: document.getElementById('s3BucketName'),
     accessKeyId: document.getElementById('s3AccessKeyId'),
     secretKey: document.getElementById('s3SecretKey'),
-    domain: document.getElementById('s3Domain')
+    domain: document.getElementById('s3Domain'),
+    r2DevUrl: document.getElementById('r2DevUrl') // 新增 r2DevUrl 输入框
   };
   const saveCloudflareConfig = document.getElementById('saveCloudflareConfig');
 
@@ -52,8 +53,9 @@ const aiProvider = document.getElementById('aiProvider');
   chrome.storage.sync.get([
     'aiProvider', 'aiApiKey', 'aiApiEndpoint', 'aiModel',
     'notionToken', 'notionDbId',
-      'cloudflareAccountId', 'cloudflareApiToken', 
-      's3BucketName', 's3AccessKeyId', 's3SecretKey', 's3Domain'
+    'cloudflareAccountId', 'cloudflareApiToken', 
+    's3BucketName', 's3AccessKeyId', 's3SecretKey', 's3Domain',
+    'r2DevUrl' // 新增 r2DevUrl 配置项
   ], (config) => {
     // AI 配置
     if (config.aiProvider) {
@@ -81,6 +83,7 @@ const aiProvider = document.getElementById('aiProvider');
     if (config.s3AccessKeyId) cloudflareInputs.accessKeyId.value = config.s3AccessKeyId;
     if (config.s3SecretKey) cloudflareInputs.secretKey.value = config.s3SecretKey;
     if (config.s3Domain) cloudflareInputs.domain.value = config.s3Domain;
+    if (config.r2DevUrl) cloudflareInputs.r2DevUrl.value = config.r2DevUrl; // 填充 r2DevUrl 输入框
   });
 
   // 保存 AI 配置
@@ -396,10 +399,10 @@ const aiProvider = document.getElementById('aiProvider');
         }
       });
 
-      const data = await response.json();
-      
       if (!response.ok) {
-        throw new Error(data.message || 'Token 验证失败');
+        const userError = await response.json();
+        setInputStatus(inputs.notionToken, 'error');
+        throw new Error(userError.message || 'Token 验证失败');
       }
 
       setInputStatus(inputs.notionToken, 'success');
@@ -482,7 +485,8 @@ const aiProvider = document.getElementById('aiProvider');
       s3BucketName: cloudflareInputs.bucketName.value.trim(),
       s3AccessKeyId: cloudflareInputs.accessKeyId.value.trim(),
       s3SecretKey: cloudflareInputs.secretKey.value.trim(),
-      s3Domain: cloudflareInputs.domain.value.trim()
+      s3Domain: cloudflareInputs.domain.value.trim(),
+      r2DevUrl: cloudflareInputs.r2DevUrl.value.trim() // 新增 r2DevUrl 配置项
     };
 
     if (!config.cloudflareAccountId || 
@@ -490,7 +494,8 @@ const aiProvider = document.getElementById('aiProvider');
         !config.s3BucketName || 
         !config.s3AccessKeyId || 
         !config.s3SecretKey || 
-        !config.s3Domain) {
+        !config.s3Domain ||
+        !config.r2DevUrl) { // 检查 r2DevUrl 是否为空
       showStatus('请完整填写 Cloudflare 配置信息', 'error');
       return;
     }
@@ -534,43 +539,52 @@ const aiProvider = document.getElementById('aiProvider');
       }
       console.log('API Token validation passed');
 
-    
-    // 验证 Bucket 名称
-    if (!config.s3BucketName) {
-      setInputStatus(cloudflareInputs.bucketName, 'error');
-      showStatus('请填写 S3 Bucket 名称', 'error');
-      return false;
-    }
-    console.log('S3 Bucket 名称验证通过');
-    setInputStatus(cloudflareInputs.bucketName, 'success');
+      // 验证 Bucket 名称
+      if (!config.s3BucketName) {
+        setInputStatus(cloudflareInputs.bucketName, 'error');
+        showStatus('请填写 S3 Bucket 名称', 'error');
+        return false;
+      }
+      console.log('S3 Bucket 名称验证通过');
+      setInputStatus(cloudflareInputs.bucketName, 'success');
 
-    // 验证 Access Key ID
-    if (!config.s3AccessKeyId) {
-      setInputStatus(cloudflareInputs.accessKeyId, 'error');
-      showStatus('请填写 S3 Access Key ID', 'error');
-      return false;
-    }
-    console.log('S3 Access Key ID 验证通过');
-    setInputStatus(cloudflareInputs.accessKeyId, 'success');
+      // 验证 Access Key ID
+      if (!config.s3AccessKeyId) {
+        setInputStatus(cloudflareInputs.accessKeyId, 'error');
+        showStatus('请填写 S3 Access Key ID', 'error');
+        return false;
+      }
+      console.log('S3 Access Key ID 验证通过');
+      setInputStatus(cloudflareInputs.accessKeyId, 'success');
 
-    // 验证 Secret Key
-    if (!config.s3SecretKey) {
-      setInputStatus(cloudflareInputs.secretKey, 'error');
-      showStatus('请填写 S3 Secret Key', 'error');
-      return false;
-    }
-    console.log('S3 Secret Key 验证通过');
-    setInputStatus(cloudflareInputs.secretKey, 'success');
+      // 验证 Secret Key
+      if (!config.s3SecretKey) {
+        setInputStatus(cloudflareInputs.secretKey, 'error');
+        showStatus('请填写 S3 Secret Key', 'error');
+        return false;
+      }
+      console.log('S3 Secret Key 验证通过');
+      setInputStatus(cloudflareInputs.secretKey, 'success');
 
-    // 验证 Domain 格式
-    const domainPattern = /^https?:\/\/[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
-    if (!domainPattern.test(config.s3Domain)) {
-      setInputStatus(cloudflareInputs.domain, 'error');
-      showStatus('S3 域名格式错误，请输入有效的 URL', 'error');
-      return false;
-    }
-    console.log('S3 域名验证通过');
-    setInputStatus(cloudflareInputs.domain, 'success');
+      // 验证 Domain 格式
+      const domainPattern = /^https?:\/\/[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+      if (!domainPattern.test(config.s3Domain)) {
+        setInputStatus(cloudflareInputs.domain, 'error');
+        showStatus('S3 域名格式错误，请输入有效的 URL', 'error');
+        return false;
+      }
+      console.log('S3 域名验证通过');
+      setInputStatus(cloudflareInputs.domain, 'success');
+
+      // 验证 r2DevUrl 格式
+      const r2DevUrlPattern = /^https?:\/\/[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+      if (!r2DevUrlPattern.test(config.r2DevUrl)) {
+        setInputStatus(cloudflareInputs.r2DevUrl, 'error');
+        showStatus('R2.dev URL 格式错误，请输入有效的 URL', 'error');
+        return false;
+      }
+      console.log('R2.dev URL 验证通过');
+      setInputStatus(cloudflareInputs.r2DevUrl, 'success');
 
       // 验证 API 连接
       showStatus('正在验证 Cloudflare API 连接...', 'info');
@@ -738,7 +752,8 @@ const aiProvider = document.getElementById('aiProvider');
     'aiProvider', 'aiApiKey', 'aiApiEndpoint', 'aiModel',
     'notionToken', 'notionDbId',
     'cloudflareAccountId', 'cloudflareApiToken', 'cloudflareImageId',
-    's3AccountId', 's3BucketName', 's3AccessKeyId', 's3SecretKey'
+    's3AccountId', 's3BucketName', 's3AccessKeyId', 's3SecretKey',
+    'r2DevUrl' // 新增 r2DevUrl 配置项
   ], (config) => {
     // AI 配置
     if (config.aiProvider) {
@@ -763,6 +778,9 @@ const aiProvider = document.getElementById('aiProvider');
     if (config.s3BucketName) s3Inputs.bucketName.value = config.s3BucketName;
     if (config.s3AccessKeyId) s3Inputs.accessKeyId.value = config.s3AccessKeyId;
     if (config.s3SecretKey) s3Inputs.secretKey.value = config.s3SecretKey;
+
+    // R2.dev URL 配置
+    if (config.r2DevUrl) cloudflareInputs.r2DevUrl.value = config.r2DevUrl; // 填充 r2DevUrl 输入框
   });
 
   // 修改状态图标控制函数

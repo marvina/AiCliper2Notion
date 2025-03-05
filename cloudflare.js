@@ -15,7 +15,7 @@ class CloudflareImageService {
         's3BucketName',
         's3AccessKeyId',
         's3SecretKey',
-        's3Domain'
+        'r2DevUrl'
       ]);
       this.config = config;
 
@@ -24,7 +24,7 @@ class CloudflareImageService {
         cloudflareAccountId: this.config.cloudflareAccountId ? '已设置' : '未设置',
         s3BucketName: this.config.s3BucketName ? '已设置' : '未设置',
         s3AccessKeyId: this.config.s3AccessKeyId ? '已设置' : '未设置',
-        s3Domain: this.config.s3Domain ? '已设置' : '未设置'
+        r2DevUrl: this.config.r2DevUrl? '已设置' : '未设置'
       });
     } catch (error) {
       console.error('初始化 Cloudflare 服务失败:', error);
@@ -87,7 +87,7 @@ class CloudflareImageService {
       const objectName = `image-${Date.now()}.${extension}`;
       const endpoint = `https://${this.config.cloudflareAccountId}.r2.cloudflarestorage.com`;
       
-      // 4. 计算签名
+      // 4. 计算签名和上传
       const { authorization, date, contentSha256 } = await this.generateSignature(
         'PUT',
         objectName,
@@ -112,10 +112,24 @@ class CloudflareImageService {
         throw new Error(`上传失败: ${uploadResponse.status} - ${errorText}`);
       }
 
-      // 6. 返回公共访问 URL
-      // R2 公共访问 URL 格式: https://{bucket-name}.{custom-domain}/{object-name}
-      const publicUrl = `https://${this.config.s3BucketName}.${this.config.s3Domain}/${objectName}`;
-      console.log('生成的公共访问 URL:', publicUrl);
+      // 6. 构建并返回 Cloudflare URL
+      // 使用 R2 公共 URL 构建图片访问地址
+      let publicUrl;
+      if (this.config.r2DevUrl) {
+        // 确保 r2DevUrl是完整的 URL
+        const baseUrl = this.config.r2DevUrl.startsWith('http') 
+          ? this.config.r2DevUrl
+          : `https://${this.config.r2DevUrl}`;
+        
+        // 移除末尾的斜杠（如果有）
+        const cleanBaseUrl = baseUrl.replace(/\/+$/, '');
+        publicUrl = `${cleanBaseUrl}/${objectName}`;
+      } else {
+        // 如果没有配置 r2DevUrl，抛出错误
+        throw new Error('请先配置 R2 存储桶公共访问 URL');
+      }
+
+      console.log('生成的 R2 公共访问 URL:', publicUrl);
       return publicUrl;
     } catch (error) {
       console.error('上传图片失败:', error);
