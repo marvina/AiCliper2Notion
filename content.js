@@ -22,9 +22,33 @@ async function extractContent() {
     const url = window.location.href.split('?')[0];
     addLog(`标题: ${title}`);
     
-    // 2. 获取主要内容
-    const content = document.body.innerText;
-    if (!content) {
+    // 2. 使用 Readability 获取主要内容
+    let mainContent = '';
+    try {
+      // 克隆文档以避免修改原始 DOM
+      const docClone = document.cloneNode(true);
+      
+      // 创建 Readability 解析器
+      const readability = new Readability(docClone);
+      
+      // 解析文档
+      const article = readability.parse();
+      
+      if (article && article.textContent) {
+        mainContent = article.textContent;
+        addLog(`使用 Readability 提取到 ${mainContent.length} 字符的内容`);
+          } else {
+        // 如果 Readability 失败，回退到原始方法
+        mainContent = document.body.innerText;
+        addLog('Readability 提取失败，使用原始方法');
+      }
+    } catch (readabilityError) {
+      // 如果 Readability 出错，回退到原始方法
+      mainContent = document.body.innerText;
+      addLog(`Readability 错误: ${readabilityError.message}，使用原始方法`);
+    }
+    
+    if (!mainContent) {
       addLog('无法提取到有效内容', 'error');
       return {
         success: false,
@@ -42,14 +66,13 @@ async function extractContent() {
       success: true,
       title,
       url,
-      content: content.substring(0, 10000), // 限制内容长度
+      content: mainContent.substring(0, 10000), // 限制内容长度
       images,
       logs: detailedLogs
     };
 
     addLog('内容提取完成');
     return response;
-
   } catch (error) {
     addLog(`内容提取失败: ${error.message}`, 'error');
     return {

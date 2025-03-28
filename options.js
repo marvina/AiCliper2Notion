@@ -111,6 +111,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // 动态更新配置（替代写入文件）
       console.log('动态更新配置:', updatedConfig);
+      
+      // 保存配置到chrome.storage.sync
+      await chrome.storage.sync.set(config);
+      console.log('AI配置已保存到chrome.storage:', config);
 
       showStatus('AI 配置保存成功', 'success');
     } catch (error) {
@@ -217,6 +221,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // 动态更新配置（替代写入文件）
       console.log('动态更新配置:', updatedConfig);
+      
+      // 保存配置到chrome.storage.sync
+      await chrome.storage.sync.set(config);
+      console.log('Notion配置已保存到chrome.storage:', config);
 
       showStatus('Notion 配置保存成功', 'success');
     } catch (error) {

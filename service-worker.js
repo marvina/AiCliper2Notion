@@ -492,6 +492,29 @@ async function handleSaveRequest(tabId, sendResponse) {
       });
     }
 
+    // 添加页面主要内容（如果有）
+    if (pageData?.content) {
+      children.push({
+        object: 'block',
+        type: 'heading_2',
+        heading_2: {
+          rich_text: [{ type: 'text', text: { content: '页面内容' } }]
+        }
+      });
+
+      // 将内容分段处理，避免超出 Notion API 的限制
+      const contentChunks = splitTextIntoChunks(pageData.content, 2000);
+      for (const chunk of contentChunks) {
+        children.push({
+          object: 'block',
+          type: 'paragraph',
+          paragraph: {
+            rich_text: [{ type: 'text', text: { content: chunk } }]
+          }
+        });
+      }
+    }
+
     // 添加图片
     if (processedImages.length > 0) {
       children.push({
@@ -550,6 +573,32 @@ async function handleSaveRequest(tabId, sendResponse) {
       message: error.message
     });
   }
+}
+
+// 辅助函数：将文本分割成较小的块
+function splitTextIntoChunks(text, maxLength) {
+  if (!text) return [];
+  
+  const chunks = [];
+  let currentIndex = 0;
+  
+  while (currentIndex < text.length) {
+    // 找到合适的分割点
+    let endIndex = Math.min(currentIndex + maxLength, text.length);
+    
+    // 如果不是文本末尾，尝试在句号、问号或感叹号处分割
+    if (endIndex < text.length) {
+      const possibleBreak = text.substring(currentIndex, endIndex).search(/[.!?]\s/);
+      if (possibleBreak !== -1 && possibleBreak > maxLength / 2) {
+        endIndex = currentIndex + possibleBreak + 2; // +2 包含标点和空格
+      }
+    }
+    
+    chunks.push(text.substring(currentIndex, endIndex));
+    currentIndex = endIndex;
+  }
+  
+  return chunks;
 }
 
 // 7. 消息监听器
